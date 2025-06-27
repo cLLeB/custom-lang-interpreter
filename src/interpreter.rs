@@ -684,6 +684,7 @@ impl Interpreter {
         result
     }
 
+    #[allow(clippy::only_used_in_recursion)]
     fn value_to_string(&self, value: &Value) -> String {
         match value {
             Value::Number(n) => {

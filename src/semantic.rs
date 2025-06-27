@@ -411,11 +411,9 @@ impl SemanticAnalyzer {
                     | BinaryOp::LessEqual
                     | BinaryOp::Greater
                     | BinaryOp::GreaterEqual => {
-                        if matches!(left_type, Type::Unknown) || matches!(right_type, Type::Unknown)
-                        {
-                            Ok(Type::Boolean) // Allow unknown types for now
-                        } else if matches!(left_type, Type::Number)
-                            && matches!(right_type, Type::Number)
+                        if matches!(left_type, Type::Unknown)
+                            || matches!(right_type, Type::Unknown)
+                            || (matches!(left_type, Type::Number) && matches!(right_type, Type::Number))
                         {
                             Ok(Type::Boolean)
                         } else {
@@ -428,11 +426,9 @@ impl SemanticAnalyzer {
                         }
                     }
                     BinaryOp::And | BinaryOp::Or => {
-                        if matches!(left_type, Type::Unknown) || matches!(right_type, Type::Unknown)
-                        {
-                            Ok(Type::Boolean) // Allow unknown types for now
-                        } else if matches!(left_type, Type::Boolean)
-                            && matches!(right_type, Type::Boolean)
+                        if matches!(left_type, Type::Unknown)
+                            || matches!(right_type, Type::Unknown)
+                            || (matches!(left_type, Type::Boolean) && matches!(right_type, Type::Boolean))
                         {
                             Ok(Type::Boolean)
                         } else {
