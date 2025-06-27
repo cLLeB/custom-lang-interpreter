@@ -1,0 +1,27 @@
+[package]
+name = "custom-lang"
+version = "0.2.0"
+edition = "2021"
+authors = ["Your Name <your.email@example.com>"]
+description = "A custom programming language interpreter built in Rust"
+license = "MIT"
+
+[[bin]]
+name = "custom-lang"
+path = "src/main.rs"
+
+[dependencies]
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# CLI and REPL
+clap = { version = "4.0", features = ["derive"] }
+rustyline = "13.0"
+
+# Utilities
+colored = "2.0"
+
+[dev-dependencies]
+# Testing utilities
+assert_matches = "1.5"
