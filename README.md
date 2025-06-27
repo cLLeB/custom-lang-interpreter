@@ -1,5 +1,10 @@
 # Custom Language Interpreter v0.2.0
 
+[![CI](https://github.com/cLLeB/custom-lang-interpreter/workflows/Basic%20CI/badge.svg)](https://github.com/cLLeB/custom-lang-interpreter/actions)
+[![Rust](https://img.shields.io/badge/rust-stable-brightgreen.svg)](https://www.rust-lang.org)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Version](https://img.shields.io/badge/version-0.2.0-orange.svg)](CHANGELOG.md)
+
 A fully-featured programming language interpreter built in Rust, featuring a complete lexer, parser, AST, and execution engine with comprehensive error handling, arrays, and a REPL.
 
 ## 🚀 Features
@@ -416,6 +421,23 @@ See the `examples/` directory for comprehensive demonstrations:
 - `functions_demo.cl` - Function definitions and recursion
 - `builtin_functions_demo.cl` - Built-in function showcase
 - `algorithms_demo.cl` - Complex algorithms and patterns
+
+## 🏷️ **Repository Topics**
+
+This repository is tagged with the following topics for discoverability:
+- `rust` - Built with Rust programming language
+- `interpreter` - Programming language interpreter
+- `programming-language` - Custom programming language implementation
+- `lexer` - Lexical analysis implementation
+- `parser` - Syntax analysis implementation
+- `ast` - Abstract Syntax Tree implementation
+- `repl` - Read-Eval-Print Loop
+- `arrays` - Dynamic array support
+- `compiler` - Language compilation and execution
+- `education` - Educational programming language project
+- `rust-lang` - Rust language implementation
+- `language-design` - Programming language design
+- `semantic-analysis` - Static analysis implementation
 
 ## 🤝 Contributing
 
