@@ -92,9 +92,8 @@ fn main() -> Result<(), CustomLangError> {
 }
 
 fn execute_file(filename: &str, verbose: bool, no_semantic: bool) -> Result<(), CustomLangError> {
-    let source = fs::read_to_string(filename).map_err(|e| {
-        CustomLangError::IoError(format!("Failed to read file '{filename}': {e}"))
-    })?;
+    let source = fs::read_to_string(filename)
+        .map_err(|e| CustomLangError::IoError(format!("Failed to read file '{filename}': {e}")))?;
 
     if verbose {
         println!("📊 File size: {} bytes", source.len());
