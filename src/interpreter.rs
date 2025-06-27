@@ -1,3 +1,13 @@
+//! # Interpreter (Execution Engine)
+//!
+//! The interpreter executes Custom Language programs by walking the AST and
+//! performing the operations specified by each node. It manages:
+//! - Variable and function environments with proper scoping
+//! - Built-in function implementations
+//! - Control flow execution (if/else, while loops, function calls)
+//! - Runtime error detection and reporting
+//! - Value conversions and type checking
+
 use crate::ast::*;
 use crate::error::{CustomLangError, Result};
 

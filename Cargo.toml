@@ -2,9 +2,16 @@
 name = "custom-lang"
 version = "0.2.0"
 edition = "2021"
-authors = ["Your Name <your.email@example.com>"]
-description = "A custom programming language interpreter built in Rust"
+authors = ["Caleb Kyere Boateng <kyereboatengcaleb@gmail.com>"]
+description = "A modern programming language interpreter with comprehensive features including dynamic typing, control flow, functions, and interactive REPL"
 license = "MIT"
+repository = "https://github.com/cLLeB/custom-lang-interpreter"
+homepage = "https://github.com/cLLeB/custom-lang-interpreter"
+documentation = "https://github.com/cLLeB/custom-lang-interpreter/blob/main/README.md"
+keywords = ["interpreter", "programming-language", "rust", "repl", "compiler"]
+categories = ["command-line-utilities", "development-tools", "parser-implementations"]
+readme = "README.md"
+rust-version = "1.70"
 
 [[bin]]
 name = "custom-lang"
@@ -25,3 +32,28 @@ colored = "2.0"
 [dev-dependencies]
 # Testing utilities
 assert_matches = "1.5"
+
+# Performance optimizations for release builds
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+# Development profile with faster compilation
+[profile.dev]
+opt-level = 0
+debug = true
+overflow-checks = true
+
+# Test profile
+[profile.test]
+opt-level = 1
+debug = true
+
+# Benchmark profile
+[profile.bench]
+opt-level = 3
+debug = false
+lto = true

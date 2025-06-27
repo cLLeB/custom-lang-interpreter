@@ -1,3 +1,18 @@
+//! # Abstract Syntax Tree (AST) Definitions
+//!
+//! This module defines the core data structures that represent the parsed structure
+//! of Custom Language programs. The AST serves as the intermediate representation
+//! between the parser and the interpreter.
+//!
+//! ## Key Components
+//!
+//! - **Position**: Source location tracking for error reporting
+//! - **Value**: Runtime values (numbers, strings, booleans, arrays, functions)
+//! - **Expr**: Expression nodes (literals, variables, operations, function calls)
+//! - **Stmt**: Statement nodes (declarations, control flow, function definitions)
+//! - **Program**: Top-level container for a complete program
+//! - **Environment**: Variable and function scope management
+
 use std::collections::HashMap;
 
 /// Position information for error reporting

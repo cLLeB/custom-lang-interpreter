@@ -1,3 +1,13 @@
+//! # Lexical Analysis (Tokenization)
+//!
+//! The lexer converts raw source code into a stream of tokens that can be
+//! processed by the parser. It handles:
+//! - Keywords and identifiers
+//! - Numeric and string literals
+//! - Operators and punctuation
+//! - Comments and whitespace
+//! - Error reporting for invalid characters
+
 use crate::ast::Position;
 use crate::error::{CustomLangError, Result};
 
@@ -311,5 +321,86 @@ impl Lexer {
         }
 
         identifier
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_tokenize_numbers() {
+        let mut lexer = Lexer::new("42 2.5 0.5");
+        let tokens = lexer.tokenize().unwrap();
+
+        assert_eq!(tokens.len(), 4); // 3 numbers + EOF
+        match &tokens[0].token_type {
+            TokenType::Number(n) => assert_eq!(*n, 42.0),
+            _ => panic!("Expected number token"),
+        }
+        match &tokens[1].token_type {
+            TokenType::Number(n) => assert_eq!(*n, 2.5),
+            _ => panic!("Expected number token"),
+        }
+    }
+
+    #[test]
+    fn test_tokenize_strings() {
+        let mut lexer = Lexer::new(r#""hello" "world""#);
+        let tokens = lexer.tokenize().unwrap();
+
+        assert_eq!(tokens.len(), 3); // 2 strings + EOF
+        match &tokens[0].token_type {
+            TokenType::String(s) => assert_eq!(s, "hello"),
+            _ => panic!("Expected string token"),
+        }
+    }
+
+    #[test]
+    fn test_tokenize_identifiers() {
+        let mut lexer = Lexer::new("variable_name function123");
+        let tokens = lexer.tokenize().unwrap();
+
+        assert_eq!(tokens.len(), 3); // 2 identifiers + EOF
+        match &tokens[0].token_type {
+            TokenType::Identifier(name) => assert_eq!(name, "variable_name"),
+            _ => panic!("Expected identifier token"),
+        }
+    }
+
+    #[test]
+    fn test_tokenize_keywords() {
+        let mut lexer = Lexer::new("let if else while function return");
+        let tokens = lexer.tokenize().unwrap();
+
+        assert_eq!(tokens.len(), 7); // 6 keywords + EOF
+        assert_eq!(tokens[0].token_type, TokenType::Let);
+        assert_eq!(tokens[1].token_type, TokenType::If);
+        assert_eq!(tokens[2].token_type, TokenType::Else);
+    }
+
+    #[test]
+    fn test_tokenize_operators() {
+        let mut lexer = Lexer::new("+ - * / == != < > <= >=");
+        let tokens = lexer.tokenize().unwrap();
+
+        assert_eq!(tokens.len(), 11); // 10 operators + EOF
+        assert_eq!(tokens[0].token_type, TokenType::Plus);
+        assert_eq!(tokens[1].token_type, TokenType::Minus);
+        assert_eq!(tokens[4].token_type, TokenType::EqualEqual);
+    }
+
+    #[test]
+    fn test_position_tracking() {
+        let mut lexer = Lexer::new("let x = 42;\nlet y = 3.14;");
+        let tokens = lexer.tokenize().unwrap();
+
+        // Check that positions are tracked correctly
+        assert_eq!(tokens[0].position.line, 1);
+        assert_eq!(tokens[0].position.column, 1);
+
+        // Find token on second line
+        let second_line_token = tokens.iter().find(|t| t.position.line == 2).unwrap();
+        assert_eq!(second_line_token.position.line, 2);
     }
 }

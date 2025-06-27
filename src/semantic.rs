@@ -1,3 +1,16 @@
+//! # Semantic Analysis
+//!
+//! Static analysis phase that performs type checking and semantic validation
+//! before code execution. This helps catch errors early and provides better
+//! error messages for common programming mistakes.
+//!
+//! ## Features
+//! - Type inference and checking
+//! - Variable scope validation
+//! - Function signature verification
+//! - Dead code detection
+//! - Comprehensive error reporting
+
 use crate::ast::*;
 use crate::error::{CustomLangError, Result};
 use std::collections::HashMap;
@@ -413,7 +426,8 @@ impl SemanticAnalyzer {
                     | BinaryOp::GreaterEqual => {
                         if matches!(left_type, Type::Unknown)
                             || matches!(right_type, Type::Unknown)
-                            || (matches!(left_type, Type::Number) && matches!(right_type, Type::Number))
+                            || (matches!(left_type, Type::Number)
+                                && matches!(right_type, Type::Number))
                         {
                             Ok(Type::Boolean)
                         } else {
@@ -428,7 +442,8 @@ impl SemanticAnalyzer {
                     BinaryOp::And | BinaryOp::Or => {
                         if matches!(left_type, Type::Unknown)
                             || matches!(right_type, Type::Unknown)
-                            || (matches!(left_type, Type::Boolean) && matches!(right_type, Type::Boolean))
+                            || (matches!(left_type, Type::Boolean)
+                                && matches!(right_type, Type::Boolean))
                         {
                             Ok(Type::Boolean)
                         } else {

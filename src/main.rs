@@ -1,3 +1,26 @@
+//! # Custom Language Interpreter
+//!
+//! A modern programming language interpreter built in Rust featuring:
+//! - Dynamic typing with comprehensive type system
+//! - Variables, expressions, and control flow
+//! - User-defined and built-in functions
+//! - Interactive REPL mode
+//! - Comprehensive error reporting with source context
+//! - Semantic analysis and type checking
+//!
+//! ## Usage
+//!
+//! ```bash
+//! # Run a program file
+//! custom-lang program.cl
+//!
+//! # Start interactive REPL
+//! custom-lang --repl
+//!
+//! # Enable verbose output
+//! custom-lang --verbose program.cl
+//! ```
+
 use clap::{Arg, Command};
 use std::fs;
 
@@ -13,6 +36,12 @@ use error::CustomLangError;
 use repl::Repl;
 use semantic::SemanticAnalyzer;
 
+/// Main entry point for the Custom Language Interpreter
+///
+/// Handles command-line argument parsing and dispatches to appropriate execution modes:
+/// - File execution mode for running .cl files
+/// - Interactive REPL mode for live coding
+/// - Help and version information display
 fn main() -> Result<(), CustomLangError> {
     let matches = Command::new("custom-lang")
         .version("0.2.0")
@@ -91,6 +120,16 @@ fn main() -> Result<(), CustomLangError> {
     Ok(())
 }
 
+/// Execute a Custom Language source file
+///
+/// # Arguments
+/// * `filename` - Path to the .cl source file to execute
+/// * `verbose` - Enable detailed execution logging
+/// * `no_semantic` - Skip semantic analysis for faster execution
+///
+/// # Returns
+/// * `Ok(())` on successful execution
+/// * `Err(CustomLangError)` on any compilation or runtime error
 fn execute_file(filename: &str, verbose: bool, no_semantic: bool) -> Result<(), CustomLangError> {
     let source = fs::read_to_string(filename)
         .map_err(|e| CustomLangError::IoError(format!("Failed to read file '{filename}': {e}")))?;
@@ -112,6 +151,22 @@ fn execute_file(filename: &str, verbose: bool, no_semantic: bool) -> Result<(), 
     Ok(())
 }
 
+/// Execute Custom Language source code through the complete compilation pipeline
+///
+/// This function orchestrates the complete execution pipeline:
+/// 1. Lexical analysis (tokenization)
+/// 2. Syntax analysis (parsing)
+/// 3. Semantic analysis (optional, for type checking)
+/// 4. Interpretation (execution)
+///
+/// # Arguments
+/// * `source` - The source code string to execute
+/// * `verbose` - Enable detailed logging of each compilation stage
+/// * `no_semantic` - Skip semantic analysis for faster execution
+///
+/// # Returns
+/// * `Ok(())` on successful execution
+/// * `Err(CustomLangError)` on any compilation or runtime error
 fn execute_source(source: &str, verbose: bool, no_semantic: bool) -> Result<(), CustomLangError> {
     // Tokenize
     if verbose {

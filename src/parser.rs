@@ -1,3 +1,15 @@
+//! # Syntax Analysis (Parsing)
+//!
+//! Recursive descent parser that converts tokens into an Abstract Syntax Tree (AST).
+//! Implements the grammar rules for the Custom Language and provides detailed
+//! error reporting for syntax errors.
+//!
+//! ## Grammar Overview
+//! - Statements: variable declarations, expressions, control flow
+//! - Expressions: arithmetic, logical, function calls, assignments
+//! - Precedence: follows standard mathematical operator precedence
+//! - Error Recovery: attempts to continue parsing after errors when possible
+
 use crate::ast::*;
 use crate::error::{CustomLangError, Result};
 use crate::lexer::{Token, TokenType};
@@ -560,6 +572,123 @@ impl Parser {
                 pos.column,
                 "Expected ';' or newline",
             ))
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lexer::Lexer;
+
+    fn parse_expression(source: &str) -> Result<Expr> {
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.tokenize()?;
+        let mut parser = Parser::new(tokens);
+        parser.expression()
+    }
+
+    fn parse_statement(source: &str) -> Result<Stmt> {
+        let mut lexer = Lexer::new(source);
+        let tokens = lexer.tokenize()?;
+        let mut parser = Parser::new(tokens);
+        parser.statement()
+    }
+
+    #[test]
+    fn test_parse_number_literal() {
+        let expr = parse_expression("42").unwrap();
+        match expr {
+            Expr::Literal {
+                value: Value::Number(n),
+                ..
+            } => assert_eq!(n, 42.0),
+            _ => panic!("Expected number literal"),
+        }
+    }
+
+    #[test]
+    fn test_parse_string_literal() {
+        let expr = parse_expression(r#""hello""#).unwrap();
+        match expr {
+            Expr::Literal {
+                value: Value::String(s),
+                ..
+            } => assert_eq!(s, "hello"),
+            _ => panic!("Expected string literal"),
+        }
+    }
+
+    #[test]
+    fn test_parse_binary_expression() {
+        let expr = parse_expression("2 + 3").unwrap();
+        match expr {
+            Expr::Binary {
+                op: BinaryOp::Add, ..
+            } => {}
+            _ => panic!("Expected binary addition expression"),
+        }
+    }
+
+    #[test]
+    fn test_parse_variable_declaration() {
+        let stmt = parse_statement("let x = 42;").unwrap();
+        match stmt {
+            Stmt::VarDeclaration { name, .. } => assert_eq!(name, "x"),
+            _ => panic!("Expected variable declaration"),
+        }
+    }
+
+    #[test]
+    fn test_parse_function_declaration() {
+        let stmt = parse_statement("function add(a, b) { return a + b; }").unwrap();
+        match stmt {
+            Stmt::Function { name, params, .. } => {
+                assert_eq!(name, "add");
+                assert_eq!(params, vec!["a", "b"]);
+            }
+            _ => panic!("Expected function declaration"),
+        }
+    }
+
+    #[test]
+    fn test_parse_if_statement() {
+        let stmt = parse_statement("if (x > 0) { print x; }").unwrap();
+        match stmt {
+            Stmt::If { .. } => {}
+            _ => panic!("Expected if statement"),
+        }
+    }
+
+    #[test]
+    fn test_operator_precedence() {
+        let expr = parse_expression("2 + 3 * 4").unwrap();
+        // Should parse as 2 + (3 * 4), not (2 + 3) * 4
+        match expr {
+            Expr::Binary {
+                left,
+                op: BinaryOp::Add,
+                right,
+                ..
+            } => {
+                // Left should be 2
+                match left.as_ref() {
+                    Expr::Literal {
+                        value: Value::Number(n),
+                        ..
+                    } => assert_eq!(*n, 2.0),
+                    _ => panic!("Expected number literal on left"),
+                }
+                // Right should be 3 * 4
+                match right.as_ref() {
+                    Expr::Binary {
+                        op: BinaryOp::Multiply,
+                        ..
+                    } => {}
+                    _ => panic!("Expected multiplication on right"),
+                }
+            }
+            _ => panic!("Expected addition at top level"),
         }
     }
 }

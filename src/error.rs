@@ -1,3 +1,20 @@
+//! # Error Handling System
+//!
+//! Comprehensive error handling for the Custom Language Interpreter with:
+//! - Detailed error messages with source context
+//! - Color-coded output for better readability
+//! - Source location tracking for precise error reporting
+//! - Multiple error categories for different compilation phases
+//!
+//! ## Error Categories
+//!
+//! - **LexError**: Tokenization errors (invalid characters, malformed tokens)
+//! - **ParseError**: Syntax errors (invalid grammar, unexpected tokens)
+//! - **SemanticError**: Type checking and semantic analysis errors
+//! - **RuntimeError**: Execution-time errors (undefined variables, type mismatches)
+//! - **TypeError**: Type-related errors during runtime
+//! - **IoError**: File system and I/O related errors
+
 use colored::*;
 use thiserror::Error;
 

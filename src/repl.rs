@@ -1,3 +1,12 @@
+//! # Read-Eval-Print Loop (REPL)
+//!
+//! Interactive shell for the Custom Language Interpreter that allows users to:
+//! - Execute statements and expressions interactively
+//! - Maintain persistent variable state across inputs
+//! - Get immediate feedback and error reporting
+//! - Access help and debugging commands
+//! - Use readline features (history, tab completion)
+
 use crate::error::{CustomLangError, Result};
 use crate::interpreter::Interpreter;
 use crate::lexer::Lexer;
