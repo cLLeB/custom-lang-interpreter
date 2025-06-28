@@ -103,6 +103,7 @@ impl CustomLangError {
         }
     }
 
+    #[allow(dead_code)]
     pub fn undefined_variable(name: impl Into<String>) -> Self {
         Self::UndefinedVariable {
             name: name.into(),
@@ -110,7 +111,10 @@ impl CustomLangError {
         }
     }
 
-    pub fn undefined_variable_with_suggestion(name: impl Into<String>, suggestion: impl Into<String>) -> Self {
+    pub fn undefined_variable_with_suggestion(
+        name: impl Into<String>,
+        suggestion: impl Into<String>,
+    ) -> Self {
         Self::UndefinedVariable {
             name: name.into(),
             suggestion: Some(suggestion.into()),
@@ -125,7 +129,11 @@ impl CustomLangError {
         }
     }
 
-    pub fn undefined_function_with_suggestion(name: impl Into<String>, suggestion: impl Into<String>) -> Self {
+    #[allow(dead_code)]
+    pub fn undefined_function_with_suggestion(
+        name: impl Into<String>,
+        suggestion: impl Into<String>,
+    ) -> Self {
         Self::UndefinedFunction {
             name: name.into(),
             suggestion: Some(suggestion.into()),
@@ -143,7 +151,11 @@ impl CustomLangError {
 
         let suggestion = self.get_suggestion();
         let suggestion_text = if let Some(suggestion) = suggestion {
-            format!("\n{}: {}", "Suggestion".bright_yellow().bold(), suggestion.bright_white())
+            format!(
+                "\n{}: {}",
+                "Suggestion".bright_yellow().bold(),
+                suggestion.bright_white()
+            )
         } else {
             String::new()
         };
@@ -159,10 +171,10 @@ impl CustomLangError {
                         suggestion_text
                     )
                 } else {
-                    format!("{}{}", error_msg, suggestion_text)
+                    format!("{error_msg}{suggestion_text}")
                 }
             }
-            _ => format!("{}{}", error_msg, suggestion_text),
+            _ => format!("{error_msg}{suggestion_text}"),
         }
     }
 
@@ -232,17 +244,31 @@ impl CustomLangError {
         let len1 = s1.len();
         let len2 = s2.len();
 
-        if len1 == 0 { return len2; }
-        if len2 == 0 { return len1; }
+        if len1 == 0 {
+            return len2;
+        }
+        if len2 == 0 {
+            return len1;
+        }
 
         let mut matrix = vec![vec![0; len2 + 1]; len1 + 1];
 
-        for i in 0..=len1 { matrix[i][0] = i; }
-        for j in 0..=len2 { matrix[0][j] = j; }
+        #[allow(clippy::needless_range_loop)]
+        for i in 0..=len1 {
+            matrix[i][0] = i;
+        }
+        #[allow(clippy::needless_range_loop)]
+        for j in 0..=len2 {
+            matrix[0][j] = j;
+        }
 
         for i in 1..=len1 {
             for j in 1..=len2 {
-                let cost = if s1.chars().nth(i - 1) == s2.chars().nth(j - 1) { 0 } else { 1 };
+                let cost = if s1.chars().nth(i - 1) == s2.chars().nth(j - 1) {
+                    0
+                } else {
+                    1
+                };
                 matrix[i][j] = (matrix[i - 1][j] + 1)
                     .min(matrix[i][j - 1] + 1)
                     .min(matrix[i - 1][j - 1] + cost);
@@ -254,7 +280,9 @@ impl CustomLangError {
 
     /// Find the most similar name from a list of candidates
     pub fn find_similar_name(target: &str, candidates: &[String]) -> Option<String> {
-        if candidates.is_empty() { return None; }
+        if candidates.is_empty() {
+            return None;
+        }
 
         let mut best_match = None;
         let mut best_distance = usize::MAX;
@@ -272,17 +300,20 @@ impl CustomLangError {
     }
 
     /// Generate helpful suggestions for common error patterns
+    #[allow(dead_code)]
     pub fn generate_suggestion(error_type: &str, context: &str) -> Option<String> {
         match error_type {
-            "undefined_variable" => {
-                Some(format!("Did you mean to declare the variable first? Use: let {} = value;", context))
-            }
-            "undefined_function" => {
-                Some("Check if the function name is spelled correctly or if it's a built-in function.".to_string())
-            }
-            "type_mismatch" => {
-                Some("Check the types of values you're using. Use type() function to inspect values.".to_string())
-            }
+            "undefined_variable" => Some(format!(
+                "Did you mean to declare the variable first? Use: let {context} = value;"
+            )),
+            "undefined_function" => Some(
+                "Check if the function name is spelled correctly or if it's a built-in function."
+                    .to_string(),
+            ),
+            "type_mismatch" => Some(
+                "Check the types of values you're using. Use type() function to inspect values."
+                    .to_string(),
+            ),
             "syntax_error" => {
                 Some("Check for missing semicolons, parentheses, or brackets.".to_string())
             }

@@ -37,7 +37,7 @@ pub enum TokenType {
     This,
     New,
     Match,
-    Arrow, // =>
+    Arrow,      // =>
     Underscore, // _
 
     // Operators

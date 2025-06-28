@@ -198,11 +198,13 @@ impl Parser {
                 self.advance();
                 path
             }
-            _ => return Err(CustomLangError::parse_error(
-                self.peek().position.line,
-                self.peek().position.column,
-                "Expected string literal for module path",
-            )),
+            _ => {
+                return Err(CustomLangError::parse_error(
+                    self.peek().position.line,
+                    self.peek().position.column,
+                    "Expected string literal for module path",
+                ))
+            }
         };
 
         // Optional alias: import "module" as alias
@@ -212,18 +214,24 @@ impl Parser {
                     self.advance();
                     Some(name)
                 }
-                _ => return Err(CustomLangError::parse_error(
-                    self.peek().position.line,
-                    self.peek().position.column,
-                    "Expected identifier after 'as'",
-                )),
+                _ => {
+                    return Err(CustomLangError::parse_error(
+                        self.peek().position.line,
+                        self.peek().position.column,
+                        "Expected identifier after 'as'",
+                    ))
+                }
             }
         } else {
             None
         };
 
         self.consume_semicolon_or_newline()?;
-        Ok(Stmt::Import { module_path, alias, pos })
+        Ok(Stmt::Import {
+            module_path,
+            alias,
+            pos,
+        })
     }
 
     fn export_statement(&mut self) -> Result<Stmt> {
@@ -235,11 +243,13 @@ impl Parser {
                 self.advance();
                 name
             }
-            _ => return Err(CustomLangError::parse_error(
-                self.peek().position.line,
-                self.peek().position.column,
-                "Expected identifier for export name",
-            )),
+            _ => {
+                return Err(CustomLangError::parse_error(
+                    self.peek().position.line,
+                    self.peek().position.column,
+                    "Expected identifier for export name",
+                ))
+            }
         };
 
         self.consume_semicolon_or_newline()?;
@@ -255,11 +265,13 @@ impl Parser {
                 self.advance();
                 name
             }
-            _ => return Err(CustomLangError::parse_error(
-                self.peek().position.line,
-                self.peek().position.column,
-                "Expected class name",
-            )),
+            _ => {
+                return Err(CustomLangError::parse_error(
+                    self.peek().position.line,
+                    self.peek().position.column,
+                    "Expected class name",
+                ))
+            }
         };
 
         // Optional inheritance: class Child extends Parent
@@ -269,11 +281,13 @@ impl Parser {
                     self.advance();
                     Some(superclass_name)
                 }
-                _ => return Err(CustomLangError::parse_error(
-                    self.peek().position.line,
-                    self.peek().position.column,
-                    "Expected superclass name after 'extends'",
-                )),
+                _ => {
+                    return Err(CustomLangError::parse_error(
+                        self.peek().position.line,
+                        self.peek().position.column,
+                        "Expected superclass name after 'extends'",
+                    ))
+                }
             }
         } else {
             None
@@ -303,7 +317,12 @@ impl Parser {
         }
 
         self.consume(&TokenType::RightBrace, "Expected '}' after class body")?;
-        Ok(Stmt::Class { name, superclass, methods, pos })
+        Ok(Stmt::Class {
+            name,
+            superclass,
+            methods,
+            pos,
+        })
     }
 
     fn block_statement(&mut self) -> Result<Stmt> {
@@ -515,11 +534,13 @@ impl Parser {
                         self.advance();
                         name
                     }
-                    _ => return Err(CustomLangError::parse_error(
-                        self.peek().position.line,
-                        self.peek().position.column,
-                        "Expected property name after '.'",
-                    )),
+                    _ => {
+                        return Err(CustomLangError::parse_error(
+                            self.peek().position.line,
+                            self.peek().position.column,
+                            "Expected property name after '.'",
+                        ))
+                    }
                 };
                 expr = Expr::PropertyAccess {
                     object: Box::new(expr),
@@ -601,11 +622,13 @@ impl Parser {
                                 self.advance();
                                 s
                             }
-                            _ => return Err(CustomLangError::parse_error(
-                                self.peek().position.line,
-                                self.peek().position.column,
-                                "Expected property name (identifier or string)",
-                            )),
+                            _ => {
+                                return Err(CustomLangError::parse_error(
+                                    self.peek().position.line,
+                                    self.peek().position.column,
+                                    "Expected property name (identifier or string)",
+                                ))
+                            }
                         };
 
                         self.consume(&TokenType::Colon, "Expected ':' after property name")?;
@@ -618,7 +641,10 @@ impl Parser {
                     }
                 }
 
-                self.consume(&TokenType::RightBrace, "Expected '}' after object properties")?;
+                self.consume(
+                    &TokenType::RightBrace,
+                    "Expected '}' after object properties",
+                )?;
                 Ok(Expr::Object { pairs, pos })
             }
             TokenType::New => {
@@ -628,11 +654,13 @@ impl Parser {
                         self.advance();
                         name
                     }
-                    _ => return Err(CustomLangError::parse_error(
-                        self.peek().position.line,
-                        self.peek().position.column,
-                        "Expected class name after 'new'",
-                    )),
+                    _ => {
+                        return Err(CustomLangError::parse_error(
+                            self.peek().position.line,
+                            self.peek().position.column,
+                            "Expected class name after 'new'",
+                        ))
+                    }
                 };
 
                 self.consume(&TokenType::LeftParen, "Expected '(' after class name")?;
@@ -648,7 +676,11 @@ impl Parser {
                 }
 
                 self.consume(&TokenType::RightParen, "Expected ')' after arguments")?;
-                Ok(Expr::New { class_name, args, pos })
+                Ok(Expr::New {
+                    class_name,
+                    args,
+                    pos,
+                })
             }
             TokenType::This => Ok(Expr::This { pos }),
             TokenType::Match => self.match_expression(pos),
@@ -753,14 +785,19 @@ impl Parser {
                                 self.advance();
                                 s
                             }
-                            _ => return Err(CustomLangError::parse_error(
-                                self.peek().position.line,
-                                self.peek().position.column,
-                                "Expected property name in object pattern",
-                            )),
+                            _ => {
+                                return Err(CustomLangError::parse_error(
+                                    self.peek().position.line,
+                                    self.peek().position.column,
+                                    "Expected property name in object pattern",
+                                ))
+                            }
                         };
 
-                        self.consume(&TokenType::Colon, "Expected ':' after property name in pattern")?;
+                        self.consume(
+                            &TokenType::Colon,
+                            "Expected ':' after property name in pattern",
+                        )?;
                         let pattern = self.parse_pattern()?;
                         pairs.push((key, pattern));
 
