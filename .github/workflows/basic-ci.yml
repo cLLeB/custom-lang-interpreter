@@ -24,7 +24,7 @@ jobs:
         components: rustfmt, clippy
         
     - name: Cache dependencies
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
         path: |
           ~/.cargo/registry
@@ -49,8 +49,18 @@ jobs:
       
     - name: Test examples
       run: |
+        echo "Testing core examples..."
         cargo run --release -- examples/test.cl
         cargo run --release -- examples/calculator.cl
+        cargo run --release -- examples/arrays_demo.cl
+        cargo run --release -- examples/string_demo.cl
+        cargo run --release -- examples/file_io_demo.cl
+        cargo run --release -- examples/objects_simple_demo.cl
+        echo "Testing advanced features (with --no-semantic)..."
+        cargo run --release -- --no-semantic examples/classes_demo.cl
+        cargo run --release -- --no-semantic examples/pattern_matching_demo.cl
+        cargo run --release -- --no-semantic examples/modules_demo.cl
+        echo "All examples passed!"
         
     - name: Run performance test
       run: cargo run --release -- examples/performance_test.cl

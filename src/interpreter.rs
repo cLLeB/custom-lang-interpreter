@@ -10,6 +10,7 @@
 
 use crate::ast::*;
 use crate::error::{CustomLangError, Result};
+use std::collections::HashMap;
 
 /// Return value for early returns from functions
 #[derive(Debug, Clone)]
@@ -65,6 +66,86 @@ impl Interpreter {
         globals.define(
             "last".to_string(),
             Value::BuiltinFunction("last".to_string()),
+        );
+        globals.define(
+            "sort".to_string(),
+            Value::BuiltinFunction("sort".to_string()),
+        );
+        globals.define(
+            "reverse".to_string(),
+            Value::BuiltinFunction("reverse".to_string()),
+        );
+        globals.define(
+            "filter".to_string(),
+            Value::BuiltinFunction("filter".to_string()),
+        );
+        globals.define(
+            "map".to_string(),
+            Value::BuiltinFunction("map".to_string()),
+        );
+        globals.define(
+            "reduce".to_string(),
+            Value::BuiltinFunction("reduce".to_string()),
+        );
+        globals.define(
+            "find".to_string(),
+            Value::BuiltinFunction("find".to_string()),
+        );
+        globals.define(
+            "includes".to_string(),
+            Value::BuiltinFunction("includes".to_string()),
+        );
+
+        // File I/O functions
+        globals.define(
+            "read_file".to_string(),
+            Value::BuiltinFunction("read_file".to_string()),
+        );
+        globals.define(
+            "write_file".to_string(),
+            Value::BuiltinFunction("write_file".to_string()),
+        );
+
+        // String manipulation functions
+        globals.define(
+            "split".to_string(),
+            Value::BuiltinFunction("split".to_string()),
+        );
+        globals.define(
+            "join".to_string(),
+            Value::BuiltinFunction("join".to_string()),
+        );
+        globals.define(
+            "substring".to_string(),
+            Value::BuiltinFunction("substring".to_string()),
+        );
+        globals.define(
+            "to_upper".to_string(),
+            Value::BuiltinFunction("to_upper".to_string()),
+        );
+        globals.define(
+            "to_lower".to_string(),
+            Value::BuiltinFunction("to_lower".to_string()),
+        );
+        globals.define(
+            "trim".to_string(),
+            Value::BuiltinFunction("trim".to_string()),
+        );
+        globals.define(
+            "starts_with".to_string(),
+            Value::BuiltinFunction("starts_with".to_string()),
+        );
+        globals.define(
+            "ends_with".to_string(),
+            Value::BuiltinFunction("ends_with".to_string()),
+        );
+        globals.define(
+            "contains".to_string(),
+            Value::BuiltinFunction("contains".to_string()),
+        );
+        globals.define(
+            "replace".to_string(),
+            Value::BuiltinFunction("replace".to_string()),
         );
 
         Self {
@@ -157,6 +238,18 @@ impl Interpreter {
                 println!("{}", self.value_to_string(&value));
                 Ok(ControlFlow::None)
             }
+            Stmt::Import { module_path, alias, .. } => {
+                self.handle_import(module_path, alias.as_deref())?;
+                Ok(ControlFlow::None)
+            }
+            Stmt::Export { name, .. } => {
+                self.handle_export(name)?;
+                Ok(ControlFlow::None)
+            }
+            Stmt::Class { name, superclass, methods, .. } => {
+                self.handle_class_declaration(name, superclass.as_deref(), methods)?;
+                Ok(ControlFlow::None)
+            }
         }
     }
 
@@ -186,7 +279,20 @@ impl Interpreter {
                 .environment
                 .get(name)
                 .cloned()
-                .ok_or_else(|| CustomLangError::undefined_variable(name)),
+                .ok_or_else(|| {
+                    let available_vars = self.get_available_variable_names();
+                    if let Some(suggestion) = CustomLangError::find_similar_name(name, &available_vars) {
+                        CustomLangError::undefined_variable_with_suggestion(
+                            name,
+                            format!("Did you mean '{}'?", suggestion)
+                        )
+                    } else {
+                        CustomLangError::undefined_variable_with_suggestion(
+                            name,
+                            format!("Variable '{}' is not defined. Use 'let {} = value;' to declare it.", name, name)
+                        )
+                    }
+                }),
             Expr::Binary {
                 left,
                 op,
@@ -210,7 +316,18 @@ impl Interpreter {
                 if self.environment.assign(name, val.clone()) {
                     Ok(val)
                 } else {
-                    Err(CustomLangError::undefined_variable(name))
+                    let available_vars = self.get_available_variable_names();
+                    if let Some(suggestion) = CustomLangError::find_similar_name(name, &available_vars) {
+                        Err(CustomLangError::undefined_variable_with_suggestion(
+                            name,
+                            format!("Did you mean '{}'? Or use 'let {} = value;' to declare a new variable.", suggestion, name)
+                        ))
+                    } else {
+                        Err(CustomLangError::undefined_variable_with_suggestion(
+                            name,
+                            format!("Variable '{}' is not defined. Use 'let {} = value;' to declare it first.", name, name)
+                        ))
+                    }
                 }
             }
             Expr::Call { callee, args, .. } => {
@@ -239,6 +356,14 @@ impl Interpreter {
                     array_values.push(self.evaluate_expr(element)?);
                 }
                 Ok(Value::Array(array_values))
+            }
+            Expr::Object { pairs, .. } => {
+                let mut object_map = std::collections::HashMap::new();
+                for (key, value_expr) in pairs {
+                    let value = self.evaluate_expr(value_expr)?;
+                    object_map.insert(key.clone(), value);
+                }
+                Ok(Value::Object(object_map))
             }
             Expr::Index { object, index, .. } => {
                 let obj_value = self.evaluate_expr(object)?;
@@ -273,6 +398,9 @@ impl Interpreter {
                             })
                         }
                     }
+                    (Value::Object(obj), Value::String(key)) => {
+                        Ok(obj.get(key).cloned().unwrap_or(Value::Null))
+                    }
                     _ => Err(CustomLangError::RuntimeError {
                         message: format!(
                             "Cannot index {} with {}",
@@ -281,6 +409,36 @@ impl Interpreter {
                         ),
                     }),
                 }
+            }
+            Expr::New { class_name, args, .. } => {
+                self.handle_class_instantiation(class_name, args)
+            }
+            Expr::This { .. } => {
+                // For now, return a simple placeholder
+                // In a full implementation, this would reference the current instance
+                Err(CustomLangError::runtime_error(
+                    "'this' keyword not yet implemented in this context"
+                ))
+            }
+            Expr::PropertyAccess { object, property, .. } => {
+                let obj_value = self.evaluate_expr(object)?;
+                match obj_value {
+                    Value::Instance { fields, .. } => {
+                        Ok(fields.get(property).cloned().unwrap_or(Value::Null))
+                    }
+                    Value::Object(obj) => {
+                        Ok(obj.get(property).cloned().unwrap_or(Value::Null))
+                    }
+                    _ => Err(CustomLangError::runtime_error(format!(
+                        "Cannot access property '{}' on {}",
+                        property,
+                        obj_value.type_name()
+                    ))),
+                }
+            }
+            Expr::Match { expr, arms, .. } => {
+                let value = self.evaluate_expr(expr)?;
+                self.evaluate_match(&value, arms)
             }
         }
     }
@@ -370,6 +528,18 @@ impl Interpreter {
                 result.extend(b.clone());
                 Ok(Value::Array(result))
             }
+            // String + Object concatenation
+            (Value::String(a), BinaryOp::Add, Value::Object(b)) => Ok(Value::String(format!(
+                "{}{}",
+                a,
+                self.value_to_string(&Value::Object(b.clone()))
+            ))),
+            // Object + String concatenation
+            (Value::Object(a), BinaryOp::Add, Value::String(b)) => Ok(Value::String(format!(
+                "{}{}",
+                self.value_to_string(&Value::Object(a.clone())),
+                b
+            ))),
 
             // Comparison operations
             (Value::Number(a), BinaryOp::Less, Value::Number(b)) => Ok(Value::Boolean(a < b)),
@@ -399,12 +569,44 @@ impl Interpreter {
                 }
             }
 
-            _ => Err(CustomLangError::type_error(format!(
-                "Unsupported operation: {} {:?} {}",
-                left.type_name(),
-                op,
-                right.type_name()
-            ))),
+            _ => {
+                let op_name = match op {
+                    BinaryOp::Add => "addition (+)",
+                    BinaryOp::Subtract => "subtraction (-)",
+                    BinaryOp::Multiply => "multiplication (*)",
+                    BinaryOp::Divide => "division (/)",
+                    BinaryOp::Modulo => "modulo (%)",
+                    BinaryOp::Less => "less than (<)",
+                    BinaryOp::LessEqual => "less than or equal (<=)",
+                    BinaryOp::Greater => "greater than (>)",
+                    BinaryOp::GreaterEqual => "greater than or equal (>=)",
+                    BinaryOp::Equal => "equality (==)",
+                    BinaryOp::NotEqual => "inequality (!=)",
+                    BinaryOp::And => "logical AND (&&)",
+                    BinaryOp::Or => "logical OR (||)",
+                };
+
+                let suggestion = match (left.type_name(), op, right.type_name()) {
+                    ("string", BinaryOp::Add, other) => {
+                        format!("To concatenate strings, convert the {} to a string first.", other)
+                    }
+                    (left_type, BinaryOp::Add | BinaryOp::Subtract | BinaryOp::Multiply | BinaryOp::Divide | BinaryOp::Modulo, right_type) => {
+                        format!("Arithmetic operations require numbers. You have {} and {}.", left_type, right_type)
+                    }
+                    (left_type, BinaryOp::Less | BinaryOp::LessEqual | BinaryOp::Greater | BinaryOp::GreaterEqual, right_type) => {
+                        format!("Comparison operations require compatible types. You have {} and {}.", left_type, right_type)
+                    }
+                    _ => "Check the types of your values. Use type() function to inspect them.".to_string()
+                };
+
+                Err(CustomLangError::type_error(format!(
+                    "Cannot perform {} on {} and {}. {}",
+                    op_name,
+                    left.type_name(),
+                    right.type_name(),
+                    suggestion
+                )))
+            }
         }
     }
 
@@ -642,6 +844,324 @@ impl Interpreter {
                     )),
                 }
             }
+            "read_file" => {
+                if args.len() != 1 {
+                    return Err(CustomLangError::runtime_error(format!(
+                        "read_file() takes exactly 1 argument ({} given)",
+                        args.len()
+                    )));
+                }
+                match &args[0] {
+                    Value::String(filename) => {
+                        match std::fs::read_to_string(filename) {
+                            Ok(content) => Ok(Value::String(content)),
+                            Err(e) => Err(CustomLangError::runtime_error(format!(
+                                "Failed to read file '{}': {}",
+                                filename, e
+                            ))),
+                        }
+                    }
+                    _ => Err(CustomLangError::type_error(
+                        "read_file() argument must be a string (filename)",
+                    )),
+                }
+            }
+            "write_file" => {
+                if args.len() != 2 {
+                    return Err(CustomLangError::runtime_error(format!(
+                        "write_file() takes exactly 2 arguments ({} given)",
+                        args.len()
+                    )));
+                }
+                match (&args[0], &args[1]) {
+                    (Value::String(filename), content) => {
+                        let content_str = self.value_to_string(content);
+                        match std::fs::write(filename, content_str) {
+                            Ok(()) => Ok(Value::Boolean(true)),
+                            Err(e) => Err(CustomLangError::runtime_error(format!(
+                                "Failed to write file '{}': {}",
+                                filename, e
+                            ))),
+                        }
+                    }
+                    _ => Err(CustomLangError::type_error(
+                        "write_file() first argument must be a string (filename)",
+                    )),
+                }
+            }
+            "split" => {
+                if args.len() != 2 {
+                    return Err(CustomLangError::runtime_error(format!(
+                        "split() takes exactly 2 arguments ({} given)",
+                        args.len()
+                    )));
+                }
+                match (&args[0], &args[1]) {
+                    (Value::String(text), Value::String(delimiter)) => {
+                        let parts: Vec<Value> = text
+                            .split(delimiter)
+                            .map(|s| Value::String(s.to_string()))
+                            .collect();
+                        Ok(Value::Array(parts))
+                    }
+                    _ => Err(CustomLangError::type_error(
+                        "split() arguments must be strings (text, delimiter)",
+                    )),
+                }
+            }
+            "join" => {
+                if args.len() != 2 {
+                    return Err(CustomLangError::runtime_error(format!(
+                        "join() takes exactly 2 arguments ({} given)",
+                        args.len()
+                    )));
+                }
+                match (&args[0], &args[1]) {
+                    (Value::Array(arr), Value::String(delimiter)) => {
+                        let strings: Vec<String> = arr
+                            .iter()
+                            .map(|v| self.value_to_string(v))
+                            .collect();
+                        Ok(Value::String(strings.join(delimiter)))
+                    }
+                    _ => Err(CustomLangError::type_error(
+                        "join() arguments must be (array, string delimiter)",
+                    )),
+                }
+            }
+            "substring" => {
+                if args.len() < 2 || args.len() > 3 {
+                    return Err(CustomLangError::runtime_error(format!(
+                        "substring() takes 2 or 3 arguments ({} given)",
+                        args.len()
+                    )));
+                }
+                match &args[0] {
+                    Value::String(text) => {
+                        let start = match &args[1] {
+                            Value::Number(n) => *n as usize,
+                            _ => return Err(CustomLangError::type_error(
+                                "substring() start index must be a number",
+                            )),
+                        };
+
+                        let chars: Vec<char> = text.chars().collect();
+                        if start >= chars.len() {
+                            return Ok(Value::String(String::new()));
+                        }
+
+                        let end = if args.len() == 3 {
+                            match &args[2] {
+                                Value::Number(n) => (*n as usize).min(chars.len()),
+                                _ => return Err(CustomLangError::type_error(
+                                    "substring() end index must be a number",
+                                )),
+                            }
+                        } else {
+                            chars.len()
+                        };
+
+                        if start >= end {
+                            Ok(Value::String(String::new()))
+                        } else {
+                            let result: String = chars[start..end].iter().collect();
+                            Ok(Value::String(result))
+                        }
+                    }
+                    _ => Err(CustomLangError::type_error(
+                        "substring() first argument must be a string",
+                    )),
+                }
+            }
+            "to_upper" => {
+                if args.len() != 1 {
+                    return Err(CustomLangError::runtime_error(format!(
+                        "to_upper() takes exactly 1 argument ({} given)",
+                        args.len()
+                    )));
+                }
+                match &args[0] {
+                    Value::String(text) => Ok(Value::String(text.to_uppercase())),
+                    _ => Err(CustomLangError::type_error(
+                        "to_upper() argument must be a string",
+                    )),
+                }
+            }
+            "to_lower" => {
+                if args.len() != 1 {
+                    return Err(CustomLangError::runtime_error(format!(
+                        "to_lower() takes exactly 1 argument ({} given)",
+                        args.len()
+                    )));
+                }
+                match &args[0] {
+                    Value::String(text) => Ok(Value::String(text.to_lowercase())),
+                    _ => Err(CustomLangError::type_error(
+                        "to_lower() argument must be a string",
+                    )),
+                }
+            }
+            "trim" => {
+                if args.len() != 1 {
+                    return Err(CustomLangError::runtime_error(format!(
+                        "trim() takes exactly 1 argument ({} given)",
+                        args.len()
+                    )));
+                }
+                match &args[0] {
+                    Value::String(text) => Ok(Value::String(text.trim().to_string())),
+                    _ => Err(CustomLangError::type_error(
+                        "trim() argument must be a string",
+                    )),
+                }
+            }
+            "starts_with" => {
+                if args.len() != 2 {
+                    return Err(CustomLangError::runtime_error(format!(
+                        "starts_with() takes exactly 2 arguments ({} given)",
+                        args.len()
+                    )));
+                }
+                match (&args[0], &args[1]) {
+                    (Value::String(text), Value::String(prefix)) => {
+                        Ok(Value::Boolean(text.starts_with(prefix)))
+                    }
+                    _ => Err(CustomLangError::type_error(
+                        "starts_with() arguments must be strings (text, prefix)",
+                    )),
+                }
+            }
+            "ends_with" => {
+                if args.len() != 2 {
+                    return Err(CustomLangError::runtime_error(format!(
+                        "ends_with() takes exactly 2 arguments ({} given)",
+                        args.len()
+                    )));
+                }
+                match (&args[0], &args[1]) {
+                    (Value::String(text), Value::String(suffix)) => {
+                        Ok(Value::Boolean(text.ends_with(suffix)))
+                    }
+                    _ => Err(CustomLangError::type_error(
+                        "ends_with() arguments must be strings (text, suffix)",
+                    )),
+                }
+            }
+            "contains" => {
+                if args.len() != 2 {
+                    return Err(CustomLangError::runtime_error(format!(
+                        "contains() takes exactly 2 arguments ({} given)",
+                        args.len()
+                    )));
+                }
+                match (&args[0], &args[1]) {
+                    (Value::String(text), Value::String(substring)) => {
+                        Ok(Value::Boolean(text.contains(substring)))
+                    }
+                    _ => Err(CustomLangError::type_error(
+                        "contains() arguments must be strings (text, substring)",
+                    )),
+                }
+            }
+            "replace" => {
+                if args.len() != 3 {
+                    return Err(CustomLangError::runtime_error(format!(
+                        "replace() takes exactly 3 arguments ({} given)",
+                        args.len()
+                    )));
+                }
+                match (&args[0], &args[1], &args[2]) {
+                    (Value::String(text), Value::String(from), Value::String(to)) => {
+                        Ok(Value::String(text.replace(from, to)))
+                    }
+                    _ => Err(CustomLangError::type_error(
+                        "replace() arguments must be strings (text, from, to)",
+                    )),
+                }
+            }
+            "sort" => {
+                if args.len() != 1 {
+                    return Err(CustomLangError::runtime_error(format!(
+                        "sort() takes exactly 1 argument ({} given)",
+                        args.len()
+                    )));
+                }
+                match &args[0] {
+                    Value::Array(arr) => {
+                        let mut sorted_arr = arr.clone();
+                        sorted_arr.sort_by(|a, b| {
+                            match (a, b) {
+                                (Value::Number(a), Value::Number(b)) => a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal),
+                                (Value::String(a), Value::String(b)) => a.cmp(b),
+                                (Value::Boolean(a), Value::Boolean(b)) => a.cmp(b),
+                                _ => std::cmp::Ordering::Equal,
+                            }
+                        });
+                        Ok(Value::Array(sorted_arr))
+                    }
+                    _ => Err(CustomLangError::type_error(
+                        "sort() argument must be an array",
+                    )),
+                }
+            }
+            "reverse" => {
+                if args.len() != 1 {
+                    return Err(CustomLangError::runtime_error(format!(
+                        "reverse() takes exactly 1 argument ({} given)",
+                        args.len()
+                    )));
+                }
+                match &args[0] {
+                    Value::Array(arr) => {
+                        let mut reversed_arr = arr.clone();
+                        reversed_arr.reverse();
+                        Ok(Value::Array(reversed_arr))
+                    }
+                    _ => Err(CustomLangError::type_error(
+                        "reverse() argument must be an array",
+                    )),
+                }
+            }
+            "includes" => {
+                if args.len() != 2 {
+                    return Err(CustomLangError::runtime_error(format!(
+                        "includes() takes exactly 2 arguments ({} given)",
+                        args.len()
+                    )));
+                }
+                match &args[0] {
+                    Value::Array(arr) => {
+                        let search_value = &args[1];
+                        let found = arr.iter().any(|item| self.values_equal(item, search_value));
+                        Ok(Value::Boolean(found))
+                    }
+                    _ => Err(CustomLangError::type_error(
+                        "includes() first argument must be an array",
+                    )),
+                }
+            }
+            "find" => {
+                if args.len() != 2 {
+                    return Err(CustomLangError::runtime_error(format!(
+                        "find() takes exactly 2 arguments ({} given)",
+                        args.len()
+                    )));
+                }
+                match &args[0] {
+                    Value::Array(arr) => {
+                        let search_value = &args[1];
+                        for item in arr {
+                            if self.values_equal(item, search_value) {
+                                return Ok(item.clone());
+                            }
+                        }
+                        Ok(Value::Null)
+                    }
+                    _ => Err(CustomLangError::type_error(
+                        "find() first argument must be an array",
+                    )),
+                }
+            }
             _ => Err(CustomLangError::runtime_error(format!(
                 "Unknown builtin function: {name}"
             ))),
@@ -711,8 +1231,350 @@ impl Interpreter {
                 let elements: Vec<String> = arr.iter().map(|v| self.value_to_string(v)).collect();
                 format!("[{}]", elements.join(", "))
             }
+            Value::Object(obj) => {
+                let pairs: Vec<String> = obj
+                    .iter()
+                    .map(|(k, v)| format!("{}: {}", k, self.value_to_string(v)))
+                    .collect();
+                format!("{{{}}}", pairs.join(", "))
+            }
+            Value::Class { name, .. } => format!("<class {}>", name),
+            Value::Instance { class_name, fields, .. } => {
+                let field_strs: Vec<String> = fields
+                    .iter()
+                    .map(|(k, v)| format!("{}: {}", k, self.value_to_string(v)))
+                    .collect();
+                format!("<{} instance {{{}}}>", class_name, field_strs.join(", "))
+            }
             Value::Function { name, .. } => format!("<function {name}>"),
             Value::BuiltinFunction(name) => format!("<builtin {name}>"),
+        }
+    }
+
+    /// Get all available variable names for error suggestions
+    fn get_available_variable_names(&self) -> Vec<String> {
+        let mut names = Vec::new();
+        let mut current_env = Some(&self.environment);
+
+        while let Some(env) = current_env {
+            names.extend(env.variables.keys().cloned());
+            current_env = env.parent.as_ref().map(|p| p.as_ref());
+        }
+
+        names
+    }
+
+    /// Get all available function names for error suggestions
+    fn get_available_function_names(&self) -> Vec<String> {
+        let mut names = Vec::new();
+        let mut current_env = Some(&self.environment);
+
+        while let Some(env) = current_env {
+            for (name, value) in &env.variables {
+                if matches!(value, Value::Function { .. } | Value::BuiltinFunction(_)) {
+                    names.push(name.clone());
+                }
+            }
+            current_env = env.parent.as_ref().map(|p| p.as_ref());
+        }
+
+        names
+    }
+
+    /// Handle import statement
+    fn handle_import(&mut self, module_path: &str, alias: Option<&str>) -> Result<()> {
+        // For now, implement a basic file-based module system
+        let file_path = if module_path.ends_with(".cl") {
+            module_path.to_string()
+        } else {
+            format!("{}.cl", module_path)
+        };
+
+        // Read and parse the module file
+        let module_source = std::fs::read_to_string(&file_path)
+            .map_err(|e| CustomLangError::runtime_error(format!(
+                "Failed to read module '{}': {}",
+                file_path, e
+            )))?;
+
+        // Parse the module
+        let mut lexer = crate::lexer::Lexer::new(&module_source);
+        let tokens = lexer.tokenize()
+            .map_err(|e| CustomLangError::runtime_error(format!(
+                "Failed to tokenize module '{}': {}",
+                file_path, e
+            )))?;
+
+        let mut parser = crate::parser::Parser::new(tokens);
+        let program = parser.parse()
+            .map_err(|e| CustomLangError::runtime_error(format!(
+                "Failed to parse module '{}': {}",
+                file_path, e
+            )))?;
+
+        // Create a new environment for the module
+        let mut module_env = Environment::new();
+        module_env.parent = Some(Box::new(self.environment.clone()));
+
+        // Execute the module in its own environment
+        let mut module_interpreter = Interpreter::new();
+        module_interpreter.environment = module_env;
+
+        println!("Executing module statements...");
+        for stmt in &program.statements {
+            module_interpreter.execute_stmt(stmt)?;
+        }
+        println!("Module execution complete. Variables in module: {:?}",
+                 module_interpreter.environment.variables.keys().collect::<Vec<_>>());
+
+        // Import exported values into current environment
+        let _module_name = alias.unwrap_or(
+            std::path::Path::new(module_path)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or(module_path)
+        );
+
+        // For now, import all variables from the module
+        // In a more sophisticated system, we'd only import explicitly exported items
+        for (name, value) in &module_interpreter.environment.variables {
+            let imported_name = if let Some(alias) = alias {
+                format!("{}_{}", alias, name)
+            } else {
+                name.clone()
+            };
+            self.environment.define(imported_name, value.clone());
+        }
+
+        println!("Imported {} items from module '{}'", module_interpreter.environment.variables.len(), module_path);
+
+        Ok(())
+    }
+
+    /// Handle export statement
+    fn handle_export(&mut self, name: &str) -> Result<()> {
+        // For now, exports are just markers
+        // In a more sophisticated system, we'd track which items are exported
+        // and only make those available to importing modules
+
+        // Verify that the exported name exists
+        if !self.environment.variables.contains_key(name) {
+            return Err(CustomLangError::runtime_error(format!(
+                "Cannot export '{}': variable or function not found",
+                name
+            )));
+        }
+
+        // For now, we'll just mark it as exported by adding a special prefix
+        // This is a simplified implementation
+        println!("Exported: {}", name);
+        Ok(())
+    }
+
+    /// Handle class declaration
+    fn handle_class_declaration(&mut self, name: &str, superclass: Option<&str>, methods: &[Stmt]) -> Result<()> {
+        // Create method map
+        let mut method_map = HashMap::new();
+
+        for method in methods {
+            if let Stmt::Function { name: method_name, params, body, .. } = method {
+                let function_value = Value::Function {
+                    name: method_name.clone(),
+                    params: params.clone(),
+                    body: Box::new(body.as_ref().clone()),
+                    closure: self.environment.clone(),
+                };
+                method_map.insert(method_name.clone(), function_value);
+            }
+        }
+
+        // Handle inheritance
+        let superclass_value = if let Some(superclass_name) = superclass {
+            match self.environment.get(superclass_name) {
+                Some(Value::Class { .. }) => Some(Box::new(self.environment.get(superclass_name).unwrap().clone())),
+                Some(_) => return Err(CustomLangError::runtime_error(format!(
+                    "'{}' is not a class", superclass_name
+                ))),
+                None => return Err(CustomLangError::runtime_error(format!(
+                    "Undefined superclass '{}'", superclass_name
+                ))),
+            }
+        } else {
+            None
+        };
+
+        // Create class value
+        let class_value = Value::Class {
+            name: name.to_string(),
+            methods: method_map,
+            superclass: superclass_value,
+        };
+
+        // Define the class in the current environment
+        self.environment.define(name.to_string(), class_value);
+        Ok(())
+    }
+
+    /// Handle class instantiation (new ClassName(args))
+    fn handle_class_instantiation(&mut self, class_name: &str, args: &[Expr]) -> Result<Value> {
+        // Get the class definition
+        let class = match self.environment.get(class_name) {
+            Some(Value::Class { name, methods, superclass }) => {
+                (name.clone(), methods.clone(), superclass.clone())
+            }
+            Some(_) => return Err(CustomLangError::runtime_error(format!(
+                "'{}' is not a class", class_name
+            ))),
+            None => return Err(CustomLangError::runtime_error(format!(
+                "Undefined class '{}'", class_name
+            ))),
+        };
+
+        let (class_name, methods, _superclass) = class;
+
+        // Create instance with empty fields initially
+        let mut instance = Value::Instance {
+            class_name: class_name.clone(),
+            fields: HashMap::new(),
+            methods: methods.clone(),
+        };
+
+        // Call constructor if it exists
+        if let Some(constructor) = methods.get("init") {
+            // Evaluate arguments
+            let mut arg_values = Vec::new();
+            for arg in args {
+                arg_values.push(self.evaluate_expr(arg)?);
+            }
+
+            // Call constructor with the instance as 'this'
+            if let Value::Function { params, body, closure, .. } = constructor {
+                if params.len() != arg_values.len() {
+                    return Err(CustomLangError::runtime_error(format!(
+                        "Constructor expects {} arguments, got {}",
+                        params.len(),
+                        arg_values.len()
+                    )));
+                }
+
+                // Create new environment for constructor
+                let mut constructor_env = Environment::new();
+                constructor_env.parent = Some(Box::new(closure.clone()));
+
+                // Bind parameters
+                for (param, arg) in params.iter().zip(arg_values.iter()) {
+                    constructor_env.define(param.clone(), arg.clone());
+                }
+
+                // Bind 'this' to the instance
+                constructor_env.define("this".to_string(), instance.clone());
+
+                // Execute constructor
+                let mut constructor_interpreter = Interpreter::new();
+                constructor_interpreter.environment = constructor_env;
+
+                match constructor_interpreter.execute_stmt(body) {
+                    Ok(_) => {
+                        // Update instance fields from constructor environment
+                        if let Value::Instance { fields, .. } = &mut instance {
+                            // Copy any new fields that were set in the constructor
+                            for (key, value) in &constructor_interpreter.environment.variables {
+                                if key != "this" && !params.contains(key) {
+                                    fields.insert(key.clone(), value.clone());
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
+        }
+
+        Ok(instance)
+    }
+
+    /// Evaluate match expression
+    fn evaluate_match(&mut self, value: &Value, arms: &[MatchArm]) -> Result<Value> {
+        for arm in arms {
+            if let Some(bindings) = self.pattern_matches(&arm.pattern, value)? {
+                // Create new environment with pattern bindings
+                let mut match_env = Environment::new();
+                match_env.parent = Some(Box::new(self.environment.clone()));
+
+                // Bind pattern variables
+                for (name, val) in bindings {
+                    match_env.define(name, val);
+                }
+
+                // Evaluate body in the new environment
+                let old_env = std::mem::replace(&mut self.environment, match_env);
+                let result = self.evaluate_expr(&arm.body);
+                self.environment = old_env;
+
+                return result;
+            }
+        }
+
+        Err(CustomLangError::runtime_error(
+            "No pattern matched in match expression"
+        ))
+    }
+
+    /// Check if a pattern matches a value and return variable bindings
+    fn pattern_matches(&self, pattern: &Pattern, value: &Value) -> Result<Option<Vec<(String, Value)>>> {
+        match pattern {
+            Pattern::Literal(literal_value) => {
+                if self.values_equal(literal_value, value) {
+                    Ok(Some(Vec::new()))
+                } else {
+                    Ok(None)
+                }
+            }
+            Pattern::Variable(name) => {
+                Ok(Some(vec![(name.clone(), value.clone())]))
+            }
+            Pattern::Wildcard => {
+                Ok(Some(Vec::new()))
+            }
+            Pattern::Array(patterns) => {
+                if let Value::Array(array) = value {
+                    if patterns.len() != array.len() {
+                        return Ok(None);
+                    }
+
+                    let mut bindings = Vec::new();
+                    for (pattern, value) in patterns.iter().zip(array.iter()) {
+                        if let Some(mut pattern_bindings) = self.pattern_matches(pattern, value)? {
+                            bindings.append(&mut pattern_bindings);
+                        } else {
+                            return Ok(None);
+                        }
+                    }
+                    Ok(Some(bindings))
+                } else {
+                    Ok(None)
+                }
+            }
+            Pattern::Object(pattern_pairs) => {
+                if let Value::Object(object) = value {
+                    let mut bindings = Vec::new();
+
+                    for (key, pattern) in pattern_pairs {
+                        if let Some(obj_value) = object.get(key) {
+                            if let Some(mut pattern_bindings) = self.pattern_matches(pattern, obj_value)? {
+                                bindings.append(&mut pattern_bindings);
+                            } else {
+                                return Ok(None);
+                            }
+                        } else {
+                            return Ok(None);
+                        }
+                    }
+                    Ok(Some(bindings))
+                } else {
+                    Ok(None)
+                }
+            }
         }
     }
 }

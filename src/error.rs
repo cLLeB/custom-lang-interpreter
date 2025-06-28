@@ -45,10 +45,16 @@ pub enum CustomLangError {
     TypeError { message: String },
 
     #[error("Undefined variable: {name}")]
-    UndefinedVariable { name: String },
+    UndefinedVariable {
+        name: String,
+        suggestion: Option<String>,
+    },
 
     #[error("Undefined function: {name}")]
-    UndefinedFunction { name: String },
+    UndefinedFunction {
+        name: String,
+        suggestion: Option<String>,
+    },
 
     #[error("Division by zero")]
     DivisionByZero,
@@ -98,12 +104,32 @@ impl CustomLangError {
     }
 
     pub fn undefined_variable(name: impl Into<String>) -> Self {
-        Self::UndefinedVariable { name: name.into() }
+        Self::UndefinedVariable {
+            name: name.into(),
+            suggestion: None,
+        }
+    }
+
+    pub fn undefined_variable_with_suggestion(name: impl Into<String>, suggestion: impl Into<String>) -> Self {
+        Self::UndefinedVariable {
+            name: name.into(),
+            suggestion: Some(suggestion.into()),
+        }
     }
 
     #[allow(dead_code)]
     pub fn undefined_function(name: impl Into<String>) -> Self {
-        Self::UndefinedFunction { name: name.into() }
+        Self::UndefinedFunction {
+            name: name.into(),
+            suggestion: None,
+        }
+    }
+
+    pub fn undefined_function_with_suggestion(name: impl Into<String>, suggestion: impl Into<String>) -> Self {
+        Self::UndefinedFunction {
+            name: name.into(),
+            suggestion: Some(suggestion.into()),
+        }
     }
 }
 
@@ -115,20 +141,36 @@ impl CustomLangError {
     pub fn display_detailed(&self, source_code: Option<&str>) -> String {
         let error_msg = format!("{}: {}", "Error".bright_red().bold(), self);
 
+        let suggestion = self.get_suggestion();
+        let suggestion_text = if let Some(suggestion) = suggestion {
+            format!("\n{}: {}", "Suggestion".bright_yellow().bold(), suggestion.bright_white())
+        } else {
+            String::new()
+        };
+
         match self {
             CustomLangError::LexError { line, column, .. }
             | CustomLangError::ParseError { line, column, .. } => {
                 if let Some(source) = source_code {
                     format!(
-                        "{}\n{}",
+                        "{}\n{}{}",
                         error_msg,
-                        self.format_source_context(source, *line, *column)
+                        self.format_source_context(source, *line, *column),
+                        suggestion_text
                     )
                 } else {
-                    error_msg
+                    format!("{}{}", error_msg, suggestion_text)
                 }
             }
-            _ => error_msg,
+            _ => format!("{}{}", error_msg, suggestion_text),
+        }
+    }
+
+    fn get_suggestion(&self) -> Option<&str> {
+        match self {
+            CustomLangError::UndefinedVariable { suggestion, .. } => suggestion.as_deref(),
+            CustomLangError::UndefinedFunction { suggestion, .. } => suggestion.as_deref(),
+            _ => None,
         }
     }
 
@@ -180,5 +222,71 @@ impl CustomLangError {
         }
 
         result
+    }
+}
+
+/// Helper functions for generating suggestions
+impl CustomLangError {
+    /// Calculate Levenshtein distance between two strings
+    fn levenshtein_distance(s1: &str, s2: &str) -> usize {
+        let len1 = s1.len();
+        let len2 = s2.len();
+
+        if len1 == 0 { return len2; }
+        if len2 == 0 { return len1; }
+
+        let mut matrix = vec![vec![0; len2 + 1]; len1 + 1];
+
+        for i in 0..=len1 { matrix[i][0] = i; }
+        for j in 0..=len2 { matrix[0][j] = j; }
+
+        for i in 1..=len1 {
+            for j in 1..=len2 {
+                let cost = if s1.chars().nth(i - 1) == s2.chars().nth(j - 1) { 0 } else { 1 };
+                matrix[i][j] = (matrix[i - 1][j] + 1)
+                    .min(matrix[i][j - 1] + 1)
+                    .min(matrix[i - 1][j - 1] + cost);
+            }
+        }
+
+        matrix[len1][len2]
+    }
+
+    /// Find the most similar name from a list of candidates
+    pub fn find_similar_name(target: &str, candidates: &[String]) -> Option<String> {
+        if candidates.is_empty() { return None; }
+
+        let mut best_match = None;
+        let mut best_distance = usize::MAX;
+
+        for candidate in candidates {
+            let distance = Self::levenshtein_distance(target, candidate);
+            // Only suggest if the distance is reasonable (less than half the target length)
+            if distance < target.len() / 2 + 2 && distance < best_distance {
+                best_distance = distance;
+                best_match = Some(candidate.clone());
+            }
+        }
+
+        best_match
+    }
+
+    /// Generate helpful suggestions for common error patterns
+    pub fn generate_suggestion(error_type: &str, context: &str) -> Option<String> {
+        match error_type {
+            "undefined_variable" => {
+                Some(format!("Did you mean to declare the variable first? Use: let {} = value;", context))
+            }
+            "undefined_function" => {
+                Some("Check if the function name is spelled correctly or if it's a built-in function.".to_string())
+            }
+            "type_mismatch" => {
+                Some("Check the types of values you're using. Use type() function to inspect values.".to_string())
+            }
+            "syntax_error" => {
+                Some("Check for missing semicolons, parentheses, or brackets.".to_string())
+            }
+            _ => None,
+        }
     }
 }

@@ -49,6 +49,9 @@ impl Parser {
             TokenType::Function => self.function_declaration(),
             TokenType::Return => self.return_statement(),
             TokenType::Print => self.print_statement(),
+            TokenType::Import => self.import_statement(),
+            TokenType::Export => self.export_statement(),
+            TokenType::Class => self.class_declaration(),
             TokenType::LeftBrace => self.block_statement(),
             _ => self.expression_statement(),
         }
@@ -184,6 +187,123 @@ impl Parser {
         self.consume_semicolon_or_newline()?;
 
         Ok(Stmt::Print { expr, pos })
+    }
+
+    fn import_statement(&mut self) -> Result<Stmt> {
+        let pos = self.advance().position.clone(); // consume 'import'
+
+        // Parse module path (string literal)
+        let module_path = match self.peek().token_type.clone() {
+            TokenType::String(path) => {
+                self.advance();
+                path
+            }
+            _ => return Err(CustomLangError::parse_error(
+                self.peek().position.line,
+                self.peek().position.column,
+                "Expected string literal for module path",
+            )),
+        };
+
+        // Optional alias: import "module" as alias
+        let alias = if self.match_token(&TokenType::Identifier("as".to_string())) {
+            match self.peek().token_type.clone() {
+                TokenType::Identifier(name) => {
+                    self.advance();
+                    Some(name)
+                }
+                _ => return Err(CustomLangError::parse_error(
+                    self.peek().position.line,
+                    self.peek().position.column,
+                    "Expected identifier after 'as'",
+                )),
+            }
+        } else {
+            None
+        };
+
+        self.consume_semicolon_or_newline()?;
+        Ok(Stmt::Import { module_path, alias, pos })
+    }
+
+    fn export_statement(&mut self) -> Result<Stmt> {
+        let pos = self.advance().position.clone(); // consume 'export'
+
+        // Parse exported name (identifier)
+        let name = match self.peek().token_type.clone() {
+            TokenType::Identifier(name) => {
+                self.advance();
+                name
+            }
+            _ => return Err(CustomLangError::parse_error(
+                self.peek().position.line,
+                self.peek().position.column,
+                "Expected identifier for export name",
+            )),
+        };
+
+        self.consume_semicolon_or_newline()?;
+        Ok(Stmt::Export { name, pos })
+    }
+
+    fn class_declaration(&mut self) -> Result<Stmt> {
+        let pos = self.advance().position.clone(); // consume 'class'
+
+        // Parse class name
+        let name = match self.peek().token_type.clone() {
+            TokenType::Identifier(name) => {
+                self.advance();
+                name
+            }
+            _ => return Err(CustomLangError::parse_error(
+                self.peek().position.line,
+                self.peek().position.column,
+                "Expected class name",
+            )),
+        };
+
+        // Optional inheritance: class Child extends Parent
+        let superclass = if self.match_token(&TokenType::Extends) {
+            match self.peek().token_type.clone() {
+                TokenType::Identifier(superclass_name) => {
+                    self.advance();
+                    Some(superclass_name)
+                }
+                _ => return Err(CustomLangError::parse_error(
+                    self.peek().position.line,
+                    self.peek().position.column,
+                    "Expected superclass name after 'extends'",
+                )),
+            }
+        } else {
+            None
+        };
+
+        // Parse class body
+        self.consume(&TokenType::LeftBrace, "Expected '{' before class body")?;
+
+        let mut methods = Vec::new();
+        while !self.check(&TokenType::RightBrace) && !self.is_at_end() {
+            // Skip newlines inside class body
+            if self.check(&TokenType::Newline) {
+                self.advance();
+                continue;
+            }
+
+            // Parse method (must be a function)
+            if self.check(&TokenType::Function) {
+                methods.push(self.function_declaration()?);
+            } else {
+                return Err(CustomLangError::parse_error(
+                    self.peek().position.line,
+                    self.peek().position.column,
+                    "Expected method declaration in class body",
+                ));
+            }
+        }
+
+        self.consume(&TokenType::RightBrace, "Expected '}' after class body")?;
+        Ok(Stmt::Class { name, superclass, methods, pos })
     }
 
     fn block_statement(&mut self) -> Result<Stmt> {
@@ -388,6 +508,24 @@ impl Parser {
                     index: Box::new(index),
                     pos,
                 };
+            } else if self.match_token(&TokenType::Dot) {
+                let pos = self.previous().position.clone();
+                let property = match self.peek().token_type.clone() {
+                    TokenType::Identifier(name) => {
+                        self.advance();
+                        name
+                    }
+                    _ => return Err(CustomLangError::parse_error(
+                        self.peek().position.line,
+                        self.peek().position.column,
+                        "Expected property name after '.'",
+                    )),
+                };
+                expr = Expr::PropertyAccess {
+                    object: Box::new(expr),
+                    property,
+                    pos,
+                };
             } else {
                 break;
             }
@@ -448,10 +586,197 @@ impl Parser {
                 )?;
                 Ok(Expr::Array { elements, pos })
             }
+            TokenType::LeftBrace => {
+                let mut pairs = Vec::new();
+
+                if !self.check(&TokenType::RightBrace) {
+                    loop {
+                        // Parse key (must be identifier or string)
+                        let key = match self.peek().token_type.clone() {
+                            TokenType::Identifier(name) => {
+                                self.advance();
+                                name
+                            }
+                            TokenType::String(s) => {
+                                self.advance();
+                                s
+                            }
+                            _ => return Err(CustomLangError::parse_error(
+                                self.peek().position.line,
+                                self.peek().position.column,
+                                "Expected property name (identifier or string)",
+                            )),
+                        };
+
+                        self.consume(&TokenType::Colon, "Expected ':' after property name")?;
+                        let value = self.expression()?;
+                        pairs.push((key, value));
+
+                        if !self.match_token(&TokenType::Comma) {
+                            break;
+                        }
+                    }
+                }
+
+                self.consume(&TokenType::RightBrace, "Expected '}' after object properties")?;
+                Ok(Expr::Object { pairs, pos })
+            }
+            TokenType::New => {
+                // Parse: new ClassName(args...)
+                let class_name = match self.peek().token_type.clone() {
+                    TokenType::Identifier(name) => {
+                        self.advance();
+                        name
+                    }
+                    _ => return Err(CustomLangError::parse_error(
+                        self.peek().position.line,
+                        self.peek().position.column,
+                        "Expected class name after 'new'",
+                    )),
+                };
+
+                self.consume(&TokenType::LeftParen, "Expected '(' after class name")?;
+
+                let mut args = Vec::new();
+                if !self.check(&TokenType::RightParen) {
+                    loop {
+                        args.push(self.expression()?);
+                        if !self.match_token(&TokenType::Comma) {
+                            break;
+                        }
+                    }
+                }
+
+                self.consume(&TokenType::RightParen, "Expected ')' after arguments")?;
+                Ok(Expr::New { class_name, args, pos })
+            }
+            TokenType::This => Ok(Expr::This { pos }),
+            TokenType::Match => self.match_expression(pos),
             _ => Err(CustomLangError::parse_error(
                 pos.line,
                 pos.column,
                 "Expected expression",
+            )),
+        }
+    }
+
+    fn match_expression(&mut self, pos: Position) -> Result<Expr> {
+        // Parse: match expr { pattern => body, ... }
+        let expr = Box::new(self.expression()?);
+
+        self.consume(&TokenType::LeftBrace, "Expected '{' after match expression")?;
+
+        let mut arms = Vec::new();
+
+        while !self.check(&TokenType::RightBrace) && !self.is_at_end() {
+            // Skip newlines
+            if self.check(&TokenType::Newline) {
+                self.advance();
+                continue;
+            }
+
+            // Parse pattern
+            let pattern = self.parse_pattern()?;
+
+            // Expect arrow
+            self.consume(&TokenType::Arrow, "Expected '=>' after pattern")?;
+
+            // Parse body expression
+            let body = self.expression()?;
+
+            arms.push(MatchArm { pattern, body });
+
+            // Skip any newlines
+            while self.check(&TokenType::Newline) {
+                self.advance();
+            }
+
+            // Check for end of match first
+            if self.check(&TokenType::RightBrace) {
+                break;
+            }
+
+            // Expect comma if not at end
+            if !self.match_token(&TokenType::Comma) {
+                return Err(CustomLangError::parse_error(
+                    self.peek().position.line,
+                    self.peek().position.column,
+                    "Expected ',' after match arm",
+                ));
+            }
+        }
+
+        self.consume(&TokenType::RightBrace, "Expected '}' after match arms")?;
+
+        Ok(Expr::Match { expr, arms, pos })
+    }
+
+    fn parse_pattern(&mut self) -> Result<Pattern> {
+        let token = self.advance();
+
+        match &token.token_type {
+            TokenType::Number(n) => Ok(Pattern::Literal(Value::Number(*n))),
+            TokenType::String(s) => Ok(Pattern::Literal(Value::String(s.clone()))),
+            TokenType::True => Ok(Pattern::Literal(Value::Boolean(true))),
+            TokenType::False => Ok(Pattern::Literal(Value::Boolean(false))),
+            TokenType::Null => Ok(Pattern::Literal(Value::Null)),
+            TokenType::Underscore => Ok(Pattern::Wildcard),
+            TokenType::Identifier(name) => Ok(Pattern::Variable(name.clone())),
+            TokenType::LeftBracket => {
+                // Array pattern: [pattern1, pattern2, ...]
+                let mut patterns = Vec::new();
+
+                if !self.check(&TokenType::RightBracket) {
+                    loop {
+                        patterns.push(self.parse_pattern()?);
+                        if !self.match_token(&TokenType::Comma) {
+                            break;
+                        }
+                    }
+                }
+
+                self.consume(&TokenType::RightBracket, "Expected ']' after array pattern")?;
+                Ok(Pattern::Array(patterns))
+            }
+            TokenType::LeftBrace => {
+                // Object pattern: {key: pattern, ...}
+                let mut pairs = Vec::new();
+
+                if !self.check(&TokenType::RightBrace) {
+                    loop {
+                        let key = match self.peek().token_type.clone() {
+                            TokenType::Identifier(name) => {
+                                self.advance();
+                                name
+                            }
+                            TokenType::String(s) => {
+                                self.advance();
+                                s
+                            }
+                            _ => return Err(CustomLangError::parse_error(
+                                self.peek().position.line,
+                                self.peek().position.column,
+                                "Expected property name in object pattern",
+                            )),
+                        };
+
+                        self.consume(&TokenType::Colon, "Expected ':' after property name in pattern")?;
+                        let pattern = self.parse_pattern()?;
+                        pairs.push((key, pattern));
+
+                        if !self.match_token(&TokenType::Comma) {
+                            break;
+                        }
+                    }
+                }
+
+                self.consume(&TokenType::RightBrace, "Expected '}' after object pattern")?;
+                Ok(Pattern::Object(pairs))
+            }
+            _ => Err(CustomLangError::parse_error(
+                token.position.line,
+                token.position.column,
+                "Expected pattern",
             )),
         }
     }

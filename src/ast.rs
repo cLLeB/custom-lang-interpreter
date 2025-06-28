@@ -36,6 +36,17 @@ pub enum Value {
     Boolean(bool),
     Null,
     Array(Vec<Value>),
+    Object(HashMap<String, Value>),
+    Class {
+        name: String,
+        methods: HashMap<String, Value>, // Method name -> Function value
+        superclass: Option<Box<Value>>,
+    },
+    Instance {
+        class_name: String,
+        fields: HashMap<String, Value>,
+        methods: HashMap<String, Value>,
+    },
     Function {
         name: String,
         params: Vec<String>,
@@ -53,6 +64,9 @@ impl Value {
             Value::Boolean(_) => "boolean",
             Value::Null => "null",
             Value::Array(_) => "array",
+            Value::Object(_) => "object",
+            Value::Class { .. } => "class",
+            Value::Instance { .. } => "instance",
             Value::Function { .. } => "function",
             Value::BuiltinFunction(_) => "builtin_function",
         }
@@ -65,6 +79,9 @@ impl Value {
             Value::Number(n) => *n != 0.0,
             Value::String(s) => !s.is_empty(),
             Value::Array(arr) => !arr.is_empty(),
+            Value::Object(obj) => !obj.is_empty(),
+            Value::Class { .. } => true,
+            Value::Instance { .. } => true,
             Value::Function { .. } => true,
             Value::BuiltinFunction(_) => true,
         }
@@ -94,6 +111,22 @@ pub enum BinaryOp {
 pub enum UnaryOp {
     Minus,
     Not,
+}
+
+/// Pattern matching structures
+#[derive(Debug, Clone, PartialEq)]
+pub struct MatchArm {
+    pub pattern: Pattern,
+    pub body: Expr,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Pattern {
+    Literal(Value),
+    Variable(String),
+    Wildcard,
+    Array(Vec<Pattern>),
+    Object(Vec<(String, Pattern)>),
 }
 
 /// Expression AST nodes
@@ -132,9 +165,31 @@ pub enum Expr {
         elements: Vec<Expr>,
         pos: Position,
     },
+    Object {
+        pairs: Vec<(String, Expr)>,
+        pos: Position,
+    },
     Index {
         object: Box<Expr>,
         index: Box<Expr>,
+        pos: Position,
+    },
+    New {
+        class_name: String,
+        args: Vec<Expr>,
+        pos: Position,
+    },
+    This {
+        pos: Position,
+    },
+    PropertyAccess {
+        object: Box<Expr>,
+        property: String,
+        pos: Position,
+    },
+    Match {
+        expr: Box<Expr>,
+        arms: Vec<MatchArm>,
         pos: Position,
     },
 }
@@ -149,7 +204,12 @@ impl Expr {
             | Expr::Call { pos, .. }
             | Expr::Assignment { pos, .. }
             | Expr::Array { pos, .. }
-            | Expr::Index { pos, .. } => pos,
+            | Expr::Object { pos, .. }
+            | Expr::Index { pos, .. }
+            | Expr::New { pos, .. }
+            | Expr::This { pos, .. }
+            | Expr::PropertyAccess { pos, .. }
+            | Expr::Match { pos, .. } => pos,
         }
     }
 }
@@ -191,6 +251,21 @@ pub enum Stmt {
         value: Option<Expr>,
         pos: Position,
     },
+    Import {
+        module_path: String,
+        alias: Option<String>,
+        pos: Position,
+    },
+    Export {
+        name: String,
+        pos: Position,
+    },
+    Class {
+        name: String,
+        superclass: Option<String>,
+        methods: Vec<Stmt>, // Function statements
+        pos: Position,
+    },
     Print {
         expr: Expr,
         pos: Position,
@@ -208,6 +283,9 @@ impl Stmt {
             | Stmt::While { pos, .. }
             | Stmt::Function { pos, .. }
             | Stmt::Return { pos, .. }
+            | Stmt::Import { pos, .. }
+            | Stmt::Export { pos, .. }
+            | Stmt::Class { pos, .. }
             | Stmt::Print { pos, .. } => pos,
         }
     }

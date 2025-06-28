@@ -90,95 +90,145 @@ impl SemanticAnalyzer {
     fn add_builtin_functions(&mut self) {
         let global_scope = &mut self.scopes[0];
 
+        // Helper function to add both as function and variable
+        let mut add_builtin = |name: &str, func_type: Type| {
+            global_scope.functions.insert(name.to_string(), func_type.clone());
+            global_scope.variables.insert(name.to_string(), func_type);
+        };
+
         // Math functions
-        global_scope.functions.insert(
-            "abs".to_string(),
-            Type::Function {
-                params: vec![Type::Number],
-                return_type: Box::new(Type::Number),
-            },
-        );
-        global_scope.functions.insert(
-            "sqrt".to_string(),
-            Type::Function {
-                params: vec![Type::Number],
-                return_type: Box::new(Type::Number),
-            },
-        );
-        global_scope.functions.insert(
-            "pow".to_string(),
-            Type::Function {
-                params: vec![Type::Number, Type::Number],
-                return_type: Box::new(Type::Number),
-            },
-        );
-        global_scope.functions.insert(
-            "min".to_string(),
-            Type::Function {
-                params: vec![Type::Number, Type::Number],
-                return_type: Box::new(Type::Number),
-            },
-        );
-        global_scope.functions.insert(
-            "max".to_string(),
-            Type::Function {
-                params: vec![Type::Number, Type::Number],
-                return_type: Box::new(Type::Number),
-            },
-        );
+        add_builtin("abs", Type::Function {
+            params: vec![Type::Number],
+            return_type: Box::new(Type::Number),
+        });
+        add_builtin("sqrt", Type::Function {
+            params: vec![Type::Number],
+            return_type: Box::new(Type::Number),
+        });
+        add_builtin("pow", Type::Function {
+            params: vec![Type::Number, Type::Number],
+            return_type: Box::new(Type::Number),
+        });
+        add_builtin("min", Type::Function {
+            params: vec![Type::Number, Type::Number],
+            return_type: Box::new(Type::Number),
+        });
+        add_builtin("max", Type::Function {
+            params: vec![Type::Number, Type::Number],
+            return_type: Box::new(Type::Number),
+        });
 
         // Utility functions
-        global_scope.functions.insert(
-            "len".to_string(),
-            Type::Function {
-                params: vec![Type::Unknown], // Now supports strings and arrays
-                return_type: Box::new(Type::Number),
-            },
-        );
-        global_scope.functions.insert(
-            "type".to_string(),
-            Type::Function {
-                params: vec![Type::Unknown], // Can accept any type
-                return_type: Box::new(Type::String),
-            },
-        );
-        global_scope.functions.insert(
-            "print".to_string(),
-            Type::Function {
-                params: vec![Type::Unknown], // Can print any type
-                return_type: Box::new(Type::Null),
-            },
-        );
+        add_builtin("len", Type::Function {
+            params: vec![Type::Unknown], // Now supports strings and arrays
+            return_type: Box::new(Type::Number),
+        });
+        add_builtin("type", Type::Function {
+            params: vec![Type::Unknown], // Can accept any type
+            return_type: Box::new(Type::String),
+        });
+        add_builtin("print", Type::Function {
+            params: vec![Type::Unknown], // Can print any type
+            return_type: Box::new(Type::Null),
+        });
 
         // Array functions
-        global_scope.functions.insert(
-            "push".to_string(),
-            Type::Function {
-                params: vec![Type::Unknown, Type::Unknown],
-                return_type: Box::new(Type::Unknown),
-            },
-        );
-        global_scope.functions.insert(
-            "pop".to_string(),
-            Type::Function {
-                params: vec![Type::Unknown],
-                return_type: Box::new(Type::Unknown),
-            },
-        );
-        global_scope.functions.insert(
-            "first".to_string(),
-            Type::Function {
-                params: vec![Type::Unknown],
-                return_type: Box::new(Type::Unknown),
-            },
-        );
-        global_scope.functions.insert(
-            "last".to_string(),
-            Type::Function {
-                params: vec![Type::Unknown],
-                return_type: Box::new(Type::Unknown),
-            },
-        );
+        add_builtin("push", Type::Function {
+            params: vec![Type::Unknown, Type::Unknown],
+            return_type: Box::new(Type::Unknown),
+        });
+        add_builtin("pop", Type::Function {
+            params: vec![Type::Unknown],
+            return_type: Box::new(Type::Unknown),
+        });
+        add_builtin("first", Type::Function {
+            params: vec![Type::Unknown],
+            return_type: Box::new(Type::Unknown),
+        });
+        add_builtin("last", Type::Function {
+            params: vec![Type::Unknown],
+            return_type: Box::new(Type::Unknown),
+        });
+        add_builtin("sort", Type::Function {
+            params: vec![Type::Unknown], // Array
+            return_type: Box::new(Type::Unknown), // Array
+        });
+        add_builtin("reverse", Type::Function {
+            params: vec![Type::Unknown], // Array
+            return_type: Box::new(Type::Unknown), // Array
+        });
+        add_builtin("includes", Type::Function {
+            params: vec![Type::Unknown, Type::Unknown], // Array, value
+            return_type: Box::new(Type::Boolean),
+        });
+        add_builtin("find", Type::Function {
+            params: vec![Type::Unknown, Type::Unknown], // Array, value
+            return_type: Box::new(Type::Unknown),
+        });
+        add_builtin("filter", Type::Function {
+            params: vec![Type::Unknown], // Will implement later
+            return_type: Box::new(Type::Unknown),
+        });
+        add_builtin("map", Type::Function {
+            params: vec![Type::Unknown], // Will implement later
+            return_type: Box::new(Type::Unknown),
+        });
+        add_builtin("reduce", Type::Function {
+            params: vec![Type::Unknown], // Will implement later
+            return_type: Box::new(Type::Unknown),
+        });
+
+        // File I/O functions
+        add_builtin("read_file", Type::Function {
+            params: vec![Type::String],
+            return_type: Box::new(Type::String),
+        });
+        add_builtin("write_file", Type::Function {
+            params: vec![Type::String, Type::Unknown],
+            return_type: Box::new(Type::Boolean),
+        });
+
+        // String manipulation functions
+        add_builtin("split", Type::Function {
+            params: vec![Type::String, Type::String],
+            return_type: Box::new(Type::Unknown), // Returns array
+        });
+        add_builtin("join", Type::Function {
+            params: vec![Type::Unknown, Type::String], // Array, delimiter
+            return_type: Box::new(Type::String),
+        });
+        add_builtin("substring", Type::Function {
+            params: vec![Type::Unknown], // Variable arguments (2 or 3)
+            return_type: Box::new(Type::String),
+        });
+        add_builtin("to_upper", Type::Function {
+            params: vec![Type::String],
+            return_type: Box::new(Type::String),
+        });
+        add_builtin("to_lower", Type::Function {
+            params: vec![Type::String],
+            return_type: Box::new(Type::String),
+        });
+        add_builtin("trim", Type::Function {
+            params: vec![Type::String],
+            return_type: Box::new(Type::String),
+        });
+        add_builtin("starts_with", Type::Function {
+            params: vec![Type::String, Type::String],
+            return_type: Box::new(Type::Boolean),
+        });
+        add_builtin("ends_with", Type::Function {
+            params: vec![Type::String, Type::String],
+            return_type: Box::new(Type::Boolean),
+        });
+        add_builtin("contains", Type::Function {
+            params: vec![Type::String, Type::String],
+            return_type: Box::new(Type::Boolean),
+        });
+        add_builtin("replace", Type::Function {
+            params: vec![Type::String, Type::String, Type::String],
+            return_type: Box::new(Type::String),
+        });
     }
 
     pub fn analyze(&mut self, program: &Program) -> Result<()> {
@@ -338,6 +388,45 @@ impl SemanticAnalyzer {
             Stmt::Expression { expr, .. } => {
                 self.analyze_expression(expr)?;
             }
+            Stmt::Import { module_path, alias, .. } => {
+                // For now, just validate that the module path is a string
+                // In a more sophisticated system, we'd validate the module exists
+                // and analyze its exports
+                if alias.is_some() {
+                    // If there's an alias, we could add it to the current scope
+                    // For now, we'll skip this
+                }
+                // Note: module_path is already validated as a string by the parser
+                let _ = module_path; // Suppress unused warning
+            }
+            Stmt::Export { name, .. } => {
+                // Validate that the exported name exists in the current scope
+                if self.lookup_variable(name).is_none() {
+                    self.errors.push(CustomLangError::undefined_variable_with_suggestion(
+                        name,
+                        "Cannot export undefined variable or function".to_string()
+                    ));
+                }
+            }
+            Stmt::Class { name, superclass, methods, .. } => {
+                // Declare the class in the current scope
+                self.declare_variable(name, Type::Unknown);
+
+                // Validate superclass if present
+                if let Some(superclass_name) = superclass {
+                    if self.lookup_variable(superclass_name).is_none() {
+                        self.errors.push(CustomLangError::undefined_variable_with_suggestion(
+                            superclass_name,
+                            "Superclass must be defined before use".to_string()
+                        ));
+                    }
+                }
+
+                // Analyze methods
+                for method in methods {
+                    self.analyze_statement(method)?;
+                }
+            }
         }
         Ok(())
     }
@@ -351,6 +440,9 @@ impl SemanticAnalyzer {
                     Value::Boolean(_) => Type::Boolean,
                     Value::Null => Type::Null,
                     Value::Array(_) => Type::Unknown, // Arrays are dynamic for now
+                    Value::Object(_) => Type::Unknown, // Objects are dynamic for now
+                    Value::Class { .. } => Type::Unknown, // Classes are dynamic for now
+                    Value::Instance { .. } => Type::Unknown, // Instances are dynamic for now
                     Value::Function { .. } => Type::Function {
                         params: vec![Type::Unknown],
                         return_type: Box::new(Type::Unknown),
@@ -365,9 +457,18 @@ impl SemanticAnalyzer {
                 if let Some(var_type) = self.lookup_variable(name) {
                     Ok(var_type.clone())
                 } else {
-                    self.errors.push(CustomLangError::SemanticError {
-                        message: format!("Undefined variable '{name}'"),
-                    });
+                    let available_vars = self.get_available_variable_names();
+                    if let Some(suggestion) = CustomLangError::find_similar_name(name, &available_vars) {
+                        self.errors.push(CustomLangError::undefined_variable_with_suggestion(
+                            name,
+                            format!("Did you mean '{}'?", suggestion)
+                        ));
+                    } else {
+                        self.errors.push(CustomLangError::undefined_variable_with_suggestion(
+                            name,
+                            format!("Variable '{}' is not defined. Use 'let {} = value;' to declare it.", name, name)
+                        ));
+                    }
                     Ok(Type::Unknown)
                 }
             }
@@ -526,7 +627,10 @@ impl SemanticAnalyzer {
                         }
                     } else {
                         self.errors
-                            .push(CustomLangError::UndefinedFunction { name: name.clone() });
+                            .push(CustomLangError::UndefinedFunction {
+                                name: name.clone(),
+                                suggestion: None,
+                            });
                         Ok(Type::Unknown)
                     }
                 } else {
@@ -545,10 +649,44 @@ impl SemanticAnalyzer {
                 }
                 Ok(Type::Unknown) // Arrays are dynamic for now
             }
+            Expr::Object { pairs, .. } => {
+                // Analyze all property values
+                for (_, value_expr) in pairs {
+                    self.analyze_expression(value_expr)?;
+                }
+                Ok(Type::Unknown) // Objects are dynamic for now
+            }
             Expr::Index { object, index, .. } => {
                 self.analyze_expression(object)?;
                 self.analyze_expression(index)?;
                 Ok(Type::Unknown) // Index results are dynamic for now
+            }
+            Expr::New { class_name: _, args, .. } => {
+                // Validate that the class exists (simplified for now)
+                // In a full implementation, we'd check the class definition
+                for arg in args {
+                    self.analyze_expression(arg)?;
+                }
+                Ok(Type::Unknown) // Class instances are dynamic for now
+            }
+            Expr::This { .. } => {
+                // For now, just return unknown type
+                // In a full implementation, we'd check if we're inside a class method
+                Ok(Type::Unknown)
+            }
+            Expr::PropertyAccess { object, property: _, .. } => {
+                self.analyze_expression(object)?;
+                Ok(Type::Unknown) // Property access results are dynamic for now
+            }
+            Expr::Match { expr, arms, .. } => {
+                self.analyze_expression(expr)?;
+
+                // Analyze all match arms
+                for arm in arms {
+                    self.analyze_expression(&arm.body)?;
+                }
+
+                Ok(Type::Unknown) // Match results are dynamic for now
             }
         }
     }
@@ -563,5 +701,14 @@ impl SemanticAnalyzer {
                 | (Type::Boolean, Type::Boolean)
                 | (Type::Null, Type::Null)
         )
+    }
+
+    /// Get all available variable names for error suggestions
+    fn get_available_variable_names(&self) -> Vec<String> {
+        let mut names = Vec::new();
+        for scope in &self.scopes {
+            names.extend(scope.variables.keys().cloned());
+        }
+        names
     }
 }

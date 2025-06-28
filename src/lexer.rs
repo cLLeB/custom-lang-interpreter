@@ -30,6 +30,15 @@ pub enum TokenType {
     False,
     Null,
     Print,
+    Import,
+    Export,
+    Class,
+    Extends,
+    This,
+    New,
+    Match,
+    Arrow, // =>
+    Underscore, // _
 
     // Operators
     Plus,
@@ -37,6 +46,7 @@ pub enum TokenType {
     Star,
     Slash,
     Percent,
+    Dot,
     Equal,
     EqualEqual,
     Bang,
@@ -57,6 +67,7 @@ pub enum TokenType {
     RightBracket,
     Comma,
     Semicolon,
+    Colon,
 
     // Special
     Newline,
@@ -115,6 +126,7 @@ impl Lexer {
                 '+' => tokens.push(Token::new(TokenType::Plus, pos)),
                 '-' => tokens.push(Token::new(TokenType::Minus, pos)),
                 '*' => tokens.push(Token::new(TokenType::Star, pos)),
+                '.' => tokens.push(Token::new(TokenType::Dot, pos)),
                 '/' => {
                     if self.peek() == '/' {
                         // Line comment
@@ -135,6 +147,7 @@ impl Lexer {
                 ']' => tokens.push(Token::new(TokenType::RightBracket, pos)),
                 ',' => tokens.push(Token::new(TokenType::Comma, pos)),
                 ';' => tokens.push(Token::new(TokenType::Semicolon, pos)),
+                ':' => tokens.push(Token::new(TokenType::Colon, pos)),
                 '\n' => {
                     tokens.push(Token::new(TokenType::Newline, pos));
                     self.line += 1;
@@ -145,6 +158,9 @@ impl Lexer {
                     if self.peek() == '=' {
                         self.advance();
                         tokens.push(Token::new(TokenType::EqualEqual, pos));
+                    } else if self.peek() == '>' {
+                        self.advance();
+                        tokens.push(Token::new(TokenType::Arrow, pos));
                     } else {
                         tokens.push(Token::new(TokenType::Equal, pos));
                     }
@@ -218,6 +234,14 @@ impl Lexer {
                         "false" => TokenType::False,
                         "null" => TokenType::Null,
                         "print" => TokenType::Print,
+                        "import" => TokenType::Import,
+                        "export" => TokenType::Export,
+                        "class" => TokenType::Class,
+                        "extends" => TokenType::Extends,
+                        "this" => TokenType::This,
+                        "new" => TokenType::New,
+                        "match" => TokenType::Match,
+                        "_" => TokenType::Underscore,
                         _ => TokenType::Identifier(identifier),
                     };
                     tokens.push(Token::new(token_type, pos));

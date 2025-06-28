@@ -23,8 +23,31 @@ A fully-featured programming language interpreter built in Rust, featuring a com
 ### Built-in Functions
 - **Math**: `abs()`, `sqrt()`, `pow()`, `min()`, `max()`
 - **Utility**: `len()` (string/array length), `type()` (type inspection)
-- **Arrays**: `push()`, `pop()`, `first()`, `last()`
-- **I/O**: `print()` (output)
+- **Arrays**: `push()`, `pop()`, `first()`, `last()`, `sort()`, `reverse()`, `includes()`, `find()`
+- **Strings**: `split()`, `join()`, `substring()`, `to_upper()`, `to_lower()`, `trim()`, `starts_with()`, `ends_with()`, `contains()`, `replace()`
+- **I/O**: `print()` (output), `read_file()`, `write_file()`
+
+### Advanced Data Structures
+- **Objects/Maps**: `{name: "John", age: 30}` with property access via `obj[key]`
+- **Enhanced Arrays**: Multi-dimensional arrays, sorting, searching, and manipulation
+- **String Manipulation**: Comprehensive string processing with split/join, case conversion, and pattern matching
+
+### Object-Oriented Programming (Experimental)
+- **Classes**: Define classes with methods and properties
+- **Inheritance**: Extend classes with inheritance support
+- **Object Instantiation**: Create instances with the `new` keyword
+- **Method Calls**: Call methods on class instances
+
+### Pattern Matching (Experimental)
+- **Match Expressions**: Pattern matching with destructuring
+- **Literal Patterns**: Match numbers, strings, booleans
+- **Variable Binding**: Capture values in patterns
+- **Array/Object Destructuring**: Extract values from complex data structures
+
+### Module System (Experimental)
+- **Import/Export**: Modular code organization with `import` and `export`
+- **File-based Modules**: Import functions and variables from other files
+- **Namespace Management**: Clean separation of concerns
 
 ### Developer Experience
 - **REPL**: Interactive Read-Eval-Print Loop for experimentation
@@ -55,6 +78,8 @@ This project features a production-ready CI/CD pipeline with multiple quality ga
 - **Code Quality**: Automated formatting checks with `rustfmt`
 - **Linting**: Comprehensive linting with `clippy` (zero warnings policy)
 - **Testing**: Full test suite including unit and integration tests
+- **Feature Testing**: Comprehensive test suite covering all language features
+- **Example Validation**: All 15+ example programs tested automatically
 - **Multi-Version Support**: Testing on Rust stable and beta channels
 
 #### Security & Performance
@@ -78,7 +103,10 @@ This project features a production-ready CI/CD pipeline with multiple quality ga
 # Run all quality checks locally
 make ci
 
-# Test all stable examples
+# Test all language features comprehensively
+./test_all_features.sh
+
+# Test stable examples only
 ./test_examples.sh
 
 # Run individual checks
@@ -181,6 +209,52 @@ function factorial(n) {
 
 print greet("World");
 print factorial(5);
+```
+
+## 📚 Example Programs
+
+The interpreter comes with comprehensive example programs demonstrating all features:
+
+### Core Language Examples
+- **`test.cl`** - Basic language features and built-in functions
+- **`calculator.cl`** - Mathematical operations and functions
+- **`math_playground_simple.cl`** - Mathematical computations and algorithms
+- **`number_game.cl`** - Interactive number guessing game
+
+### Data Structure Examples
+- **`arrays_demo.cl`** - Array creation, indexing, and basic operations
+- **`enhanced_arrays_demo.cl`** - Advanced array operations (sort, reverse, search)
+- **`objects_demo.cl`** - Object/map creation and property access
+- **`objects_simple_demo.cl`** - Simplified object operations
+- **`string_demo.cl`** - String manipulation and processing
+
+### Advanced Feature Examples
+- **`file_io_demo.cl`** - File reading and writing operations
+- **`error_handling_demo.cl`** - Enhanced error messages and suggestions
+- **`performance_test.cl`** - Performance testing and benchmarking
+
+### Experimental Features (use `--no-semantic` flag)
+- **`classes_demo.cl`** - Object-oriented programming with classes
+- **`pattern_matching_demo.cl`** - Pattern matching and destructuring
+- **`modules_demo.cl`** - Module system with import/export
+- **`math_utils.cl`** - Utility module for mathematical functions
+
+### Running Examples
+```bash
+# Core examples
+cargo run --release -- examples/test.cl
+cargo run --release -- examples/calculator.cl
+
+# Advanced examples
+cargo run --release -- examples/arrays_demo.cl
+cargo run --release -- examples/file_io_demo.cl
+
+# Experimental features (requires --no-semantic flag)
+cargo run --release -- --no-semantic examples/classes_demo.cl
+cargo run --release -- --no-semantic examples/pattern_matching_demo.cl
+
+# Run all examples with comprehensive testing
+./test_all_features.sh
 ```
 
 ## 📖 Language Reference
