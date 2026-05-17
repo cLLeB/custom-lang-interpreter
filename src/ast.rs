@@ -1,22 +1,12 @@
-//! # Abstract Syntax Tree (AST) Definitions
-//!
-//! This module defines the core data structures that represent the parsed structure
-//! of Custom Language programs. The AST serves as the intermediate representation
-//! between the parser and the interpreter.
-//!
-//! ## Key Components
-//!
-//! - **Position**: Source location tracking for error reporting
-//! - **Value**: Runtime values (numbers, strings, booleans, arrays, functions)
-//! - **Expr**: Expression nodes (literals, variables, operations, function calls)
-//! - **Stmt**: Statement nodes (declarations, control flow, function definitions)
-//! - **Program**: Top-level container for a complete program
-//! - **Environment**: Variable and function scope management
-
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::fmt;
+use std::rc::Rc;
 
-/// Position information for error reporting
-#[derive(Debug, Clone, PartialEq)]
+use crate::env::EnvRef;
+
+/// Source location for error reporting
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Position {
     pub line: usize,
     pub column: usize,
@@ -28,68 +18,163 @@ impl Position {
     }
 }
 
-/// Data types supported by the language
-#[derive(Debug, Clone, PartialEq)]
+impl fmt::Display for Position {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:{}", self.line, self.column)
+    }
+}
+
+// ─────────────────────────────── VALUES ─────────────────────────────────────
+
+/// All runtime values produced by the interpreter
+#[derive(Debug, Clone)]
 pub enum Value {
     Number(f64),
-    String(String),
-    Boolean(bool),
+    Str(String),
+    Bool(bool),
     Null,
-    Array(Vec<Value>),
-    Object(HashMap<String, Value>),
-    Class {
-        name: String,
-        methods: HashMap<String, Value>, // Method name -> Function value
-        superclass: Option<Box<Value>>,
-    },
-    Instance {
-        class_name: String,
-        fields: HashMap<String, Value>,
-        methods: HashMap<String, Value>,
-    },
-    Function {
-        name: String,
-        params: Vec<String>,
-        body: Box<crate::ast::Stmt>,
-        closure: Environment,
-    },
-    BuiltinFunction(String),
+    /// Arrays are heap-allocated and shared by reference, enabling mutation
+    Array(Rc<RefCell<Vec<Value>>>),
+    /// Objects likewise share state
+    Object(Rc<RefCell<HashMap<String, Value>>>),
+    Function(Rc<FnData>),
+    Builtin(String),
+    Class(Rc<ClassData>),
+    Instance(Rc<RefCell<InstanceData>>),
+}
+
+#[derive(Debug)]
+pub struct FnData {
+    pub name: String,
+    pub params: Vec<String>,
+    pub body: Box<Stmt>,
+    /// The captured environment at the time the function was defined
+    pub closure: EnvRef,
+}
+
+#[derive(Debug)]
+pub struct ClassData {
+    pub name: String,
+    pub methods: HashMap<String, Rc<FnData>>,
+    pub superclass: Option<Rc<ClassData>>,
+}
+
+#[derive(Debug)]
+pub struct InstanceData {
+    pub class: Rc<ClassData>,
+    pub fields: HashMap<String, Value>,
 }
 
 impl Value {
     pub fn type_name(&self) -> &'static str {
         match self {
             Value::Number(_) => "number",
-            Value::String(_) => "string",
-            Value::Boolean(_) => "boolean",
+            Value::Str(_) => "string",
+            Value::Bool(_) => "boolean",
             Value::Null => "null",
             Value::Array(_) => "array",
             Value::Object(_) => "object",
-            Value::Class { .. } => "class",
-            Value::Instance { .. } => "instance",
-            Value::Function { .. } => "function",
-            Value::BuiltinFunction(_) => "builtin_function",
+            Value::Function(_) | Value::Builtin(_) => "function",
+            Value::Class(_) => "class",
+            Value::Instance(_) => "instance",
         }
     }
 
     pub fn is_truthy(&self) -> bool {
         match self {
-            Value::Boolean(b) => *b,
+            Value::Bool(b) => *b,
             Value::Null => false,
             Value::Number(n) => *n != 0.0,
-            Value::String(s) => !s.is_empty(),
-            Value::Array(arr) => !arr.is_empty(),
-            Value::Object(obj) => !obj.is_empty(),
-            Value::Class { .. } => true,
-            Value::Instance { .. } => true,
-            Value::Function { .. } => true,
-            Value::BuiltinFunction(_) => true,
+            Value::Str(s) => !s.is_empty(),
+            Value::Array(a) => !a.borrow().is_empty(),
+            Value::Object(o) => !o.borrow().is_empty(),
+            _ => true,
+        }
+    }
+
+    /// Value equality (structural for primitives/arrays, reference for objects/instances)
+    pub fn equals(&self, other: &Value) -> bool {
+        match (self, other) {
+            (Value::Number(a), Value::Number(b)) => (a - b).abs() < f64::EPSILON,
+            (Value::Str(a), Value::Str(b)) => a == b,
+            (Value::Bool(a), Value::Bool(b)) => a == b,
+            (Value::Null, Value::Null) => true,
+            (Value::Array(a), Value::Array(b)) => {
+                if Rc::ptr_eq(a, b) {
+                    return true;
+                }
+                let a = a.borrow();
+                let b = b.borrow();
+                a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x.equals(y))
+            }
+            (Value::Object(a), Value::Object(b)) => Rc::ptr_eq(a, b),
+            (Value::Instance(a), Value::Instance(b)) => Rc::ptr_eq(a, b),
+            _ => false,
+        }
+    }
+
+    /// Make an empty mutable array
+    pub fn make_array(elements: Vec<Value>) -> Value {
+        Value::Array(Rc::new(RefCell::new(elements)))
+    }
+
+    /// Make an empty mutable object
+    pub fn make_object(pairs: HashMap<String, Value>) -> Value {
+        Value::Object(Rc::new(RefCell::new(pairs)))
+    }
+}
+
+impl fmt::Display for Value {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Value::Number(n) => {
+                if n.fract() == 0.0 && n.abs() < 1e15 {
+                    write!(f, "{}", *n as i64)
+                } else {
+                    write!(f, "{n}")
+                }
+            }
+            Value::Str(s) => write!(f, "{s}"),
+            Value::Bool(b) => write!(f, "{b}"),
+            Value::Null => write!(f, "null"),
+            Value::Array(arr) => {
+                let arr = arr.borrow();
+                let parts: Vec<String> = arr.iter().map(|v| v.repr()).collect();
+                write!(f, "[{}]", parts.join(", "))
+            }
+            Value::Object(obj) => {
+                let obj = obj.borrow();
+                let mut pairs: Vec<String> = obj
+                    .iter()
+                    .map(|(k, v)| format!("{k}: {}", v.repr()))
+                    .collect();
+                pairs.sort(); // deterministic output
+                write!(f, "{{{}}}", pairs.join(", "))
+            }
+            Value::Function(fd) => write!(f, "<function {}>", fd.name),
+            Value::Builtin(name) => write!(f, "<builtin {name}>"),
+            Value::Class(c) => write!(f, "<class {}>", c.name),
+            Value::Instance(inst) => {
+                let inst = inst.borrow();
+                write!(f, "<{} instance>", inst.class.name)
+            }
         }
     }
 }
 
-/// Binary operators
-#[derive(Debug, Clone, PartialEq)]
+impl Value {
+    /// Like Display but wraps strings in quotes — used for array/object display
+    pub fn repr(&self) -> String {
+        match self {
+            Value::Str(s) => format!("\"{s}\""),
+            other => other.to_string(),
+        }
+    }
+}
+
+// ─────────────────────────────── AST NODES ──────────────────────────────────
+
+#[derive(Debug, Clone)]
 pub enum BinaryOp {
     Add,
     Subtract,
@@ -106,38 +191,84 @@ pub enum BinaryOp {
     Or,
 }
 
-/// Unary operators
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum UnaryOp {
     Minus,
     Not,
 }
 
-/// Pattern matching structures
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
+pub enum CompoundOp {
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Modulo,
+}
+
+impl CompoundOp {
+    pub fn to_binary(&self) -> BinaryOp {
+        match self {
+            CompoundOp::Add => BinaryOp::Add,
+            CompoundOp::Subtract => BinaryOp::Subtract,
+            CompoundOp::Multiply => BinaryOp::Multiply,
+            CompoundOp::Divide => BinaryOp::Divide,
+            CompoundOp::Modulo => BinaryOp::Modulo,
+        }
+    }
+}
+
+/// Pattern nodes for match expressions
+#[derive(Debug, Clone)]
 pub struct MatchArm {
     pub pattern: Pattern,
     pub body: Expr,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum Pattern {
-    Literal(Value),
-    Variable(String),
+    Number(f64),
+    Str(String),
+    Bool(bool),
+    Null,
     Wildcard,
+    Binding(String),
     Array(Vec<Pattern>),
     Object(Vec<(String, Pattern)>),
 }
 
 /// Expression AST nodes
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum Expr {
     Literal {
         value: Value,
         pos: Position,
     },
-    Identifier {
+    Var {
         name: String,
+        pos: Position,
+    },
+    Assign {
+        name: String,
+        value: Box<Expr>,
+        pos: Position,
+    },
+    CompoundAssign {
+        name: String,
+        op: CompoundOp,
+        value: Box<Expr>,
+        pos: Position,
+    },
+    IndexAssign {
+        object: Box<Expr>,
+        index: Box<Expr>,
+        value: Box<Expr>,
+        pos: Position,
+    },
+    PropAssign {
+        object: Box<Expr>,
+        prop: String,
+        value: Box<Expr>,
         pos: Position,
     },
     Binary {
@@ -156,9 +287,14 @@ pub enum Expr {
         args: Vec<Expr>,
         pos: Position,
     },
-    Assignment {
+    Index {
+        object: Box<Expr>,
+        index: Box<Expr>,
+        pos: Position,
+    },
+    Prop {
+        object: Box<Expr>,
         name: String,
-        value: Box<Expr>,
         pos: Position,
     },
     Array {
@@ -169,22 +305,17 @@ pub enum Expr {
         pairs: Vec<(String, Expr)>,
         pos: Position,
     },
-    Index {
-        object: Box<Expr>,
-        index: Box<Expr>,
-        pos: Position,
-    },
     New {
-        class_name: String,
+        class: String,
         args: Vec<Expr>,
         pos: Position,
     },
     This {
         pos: Position,
     },
-    PropertyAccess {
-        object: Box<Expr>,
-        property: String,
+    Lambda {
+        params: Vec<String>,
+        body: Box<Stmt>,
         pos: Position,
     },
     Match {
@@ -195,49 +326,67 @@ pub enum Expr {
 }
 
 impl Expr {
-    pub fn position(&self) -> &Position {
+    pub fn pos(&self) -> &Position {
         match self {
             Expr::Literal { pos, .. }
-            | Expr::Identifier { pos, .. }
+            | Expr::Var { pos, .. }
+            | Expr::Assign { pos, .. }
+            | Expr::CompoundAssign { pos, .. }
+            | Expr::IndexAssign { pos, .. }
+            | Expr::PropAssign { pos, .. }
             | Expr::Binary { pos, .. }
             | Expr::Unary { pos, .. }
             | Expr::Call { pos, .. }
-            | Expr::Assignment { pos, .. }
+            | Expr::Index { pos, .. }
+            | Expr::Prop { pos, .. }
             | Expr::Array { pos, .. }
             | Expr::Object { pos, .. }
-            | Expr::Index { pos, .. }
             | Expr::New { pos, .. }
-            | Expr::This { pos, .. }
-            | Expr::PropertyAccess { pos, .. }
+            | Expr::This { pos }
+            | Expr::Lambda { pos, .. }
             | Expr::Match { pos, .. } => pos,
         }
     }
 }
 
 /// Statement AST nodes
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum Stmt {
-    Expression {
+    Expr {
         expr: Expr,
         pos: Position,
     },
-    VarDeclaration {
+    Let {
         name: String,
-        initializer: Option<Expr>,
+        init: Option<Expr>,
         pos: Position,
     },
     Block {
-        statements: Vec<Stmt>,
+        stmts: Vec<Stmt>,
         pos: Position,
     },
     If {
-        condition: Expr,
-        then_stmt: Box<Stmt>,
-        else_stmt: Option<Box<Stmt>>,
+        cond: Expr,
+        then_b: Box<Stmt>,
+        else_b: Option<Box<Stmt>>,
         pos: Position,
     },
     While {
-        condition: Expr,
+        cond: Expr,
+        body: Box<Stmt>,
+        pos: Position,
+    },
+    For {
+        init: Option<Box<Stmt>>,
+        cond: Option<Expr>,
+        update: Option<Expr>,
+        body: Box<Stmt>,
+        pos: Position,
+    },
+    ForIn {
+        var: String,
+        iter: Expr,
         body: Box<Stmt>,
         pos: Position,
     },
@@ -251,8 +400,18 @@ pub enum Stmt {
         value: Option<Expr>,
         pos: Position,
     },
+    Break {
+        pos: Position,
+    },
+    Continue {
+        pos: Position,
+    },
+    Print {
+        expr: Expr,
+        pos: Position,
+    },
     Import {
-        module_path: String,
+        path: String,
         alias: Option<String>,
         pos: Position,
     },
@@ -262,87 +421,43 @@ pub enum Stmt {
     },
     Class {
         name: String,
-        superclass: Option<String>,
-        methods: Vec<Stmt>, // Function statements
-        pos: Position,
-    },
-    Print {
-        expr: Expr,
+        super_name: Option<String>,
+        methods: Vec<Stmt>,
         pos: Position,
     },
 }
 
 impl Stmt {
     #[allow(dead_code)]
-    pub fn position(&self) -> &Position {
+    pub fn pos(&self) -> &Position {
         match self {
-            Stmt::Expression { pos, .. }
-            | Stmt::VarDeclaration { pos, .. }
+            Stmt::Expr { pos, .. }
+            | Stmt::Let { pos, .. }
             | Stmt::Block { pos, .. }
             | Stmt::If { pos, .. }
             | Stmt::While { pos, .. }
+            | Stmt::For { pos, .. }
+            | Stmt::ForIn { pos, .. }
             | Stmt::Function { pos, .. }
             | Stmt::Return { pos, .. }
+            | Stmt::Break { pos }
+            | Stmt::Continue { pos }
+            | Stmt::Print { pos, .. }
             | Stmt::Import { pos, .. }
             | Stmt::Export { pos, .. }
-            | Stmt::Class { pos, .. }
-            | Stmt::Print { pos, .. } => pos,
+            | Stmt::Class { pos, .. } => pos,
         }
     }
 }
 
-/// Program is a collection of statements
-#[derive(Debug, Clone, PartialEq)]
+/// Top-level program
+#[derive(Debug, Clone)]
 pub struct Program {
-    pub statements: Vec<Stmt>,
+    pub stmts: Vec<Stmt>,
 }
 
 impl Program {
-    pub fn new(statements: Vec<Stmt>) -> Self {
-        Self { statements }
-    }
-}
-
-/// Environment for variable and function storage
-#[derive(Debug, Clone, PartialEq)]
-pub struct Environment {
-    pub variables: HashMap<String, Value>,
-    pub parent: Option<Box<Environment>>,
-}
-
-impl Environment {
-    pub fn new() -> Self {
-        Self {
-            variables: HashMap::new(),
-            parent: None,
-        }
-    }
-
-    pub fn with_parent(parent: Environment) -> Self {
-        Self {
-            variables: HashMap::new(),
-            parent: Some(Box::new(parent)),
-        }
-    }
-
-    pub fn define(&mut self, name: String, value: Value) {
-        self.variables.insert(name, value);
-    }
-
-    pub fn get(&self, name: &str) -> Option<&Value> {
-        self.variables
-            .get(name)
-            .or_else(|| self.parent.as_ref().and_then(|parent| parent.get(name)))
-    }
-
-    pub fn assign(&mut self, name: &str, value: Value) -> bool {
-        if self.variables.contains_key(name) {
-            self.variables.insert(name.to_string(), value);
-            true
-        } else if let Some(parent) = &mut self.parent {
-            parent.assign(name, value)
-        } else {
-            false
-        }
+    pub fn new(stmts: Vec<Stmt>) -> Self {
+        Self { stmts }
     }
 }

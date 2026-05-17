@@ -1,13 +1,4 @@
-//! # Read-Eval-Print Loop (REPL)
-//!
-//! Interactive shell for the Custom Language Interpreter that allows users to:
-//! - Execute statements and expressions interactively
-//! - Maintain persistent variable state across inputs
-//! - Get immediate feedback and error reporting
-//! - Access help and debugging commands
-//! - Use readline features (history, tab completion)
-
-use crate::error::{CustomLangError, Result};
+use crate::error::Result;
 use crate::interpreter::Interpreter;
 use crate::lexer::Lexer;
 use crate::parser::Parser;
@@ -15,7 +6,6 @@ use colored::*;
 use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
 
-/// Read-Eval-Print Loop for interactive usage
 pub struct Repl {
     interpreter: Interpreter,
     editor: DefaultEditor,
@@ -30,27 +20,23 @@ impl Repl {
     }
 
     pub fn run(&mut self) -> Result<()> {
-        println!("{}", "Custom Language REPL v0.1.0".bright_cyan());
+        println!("{}", "Custom Language REPL v1.0.0".bright_cyan().bold());
         println!(
             "{}",
-            "Type 'exit' or 'quit' to exit, 'help' for help".dimmed()
+            "Type 'exit' or 'quit' to exit, 'help' for commands.".dimmed()
         );
         println!();
 
         loop {
             match self.editor.readline(">> ") {
                 Ok(line) => {
-                    let line = line.trim();
-
+                    let line = line.trim().to_string();
                     if line.is_empty() {
                         continue;
                     }
+                    let _ = self.editor.add_history_entry(&line);
 
-                    // Add to history
-                    let _ = self.editor.add_history_entry(line);
-
-                    // Handle special commands
-                    match line {
+                    match line.as_str() {
                         "exit" | "quit" => {
                             println!("{}", "Goodbye!".bright_green());
                             break;
@@ -66,78 +52,58 @@ impl Repl {
                         _ => {}
                     }
 
-                    // Execute the line
-                    if let Err(e) = self.execute_line(line) {
-                        println!("{}", e.display_detailed(Some(line)));
+                    if let Err(e) = self.execute_line(&line) {
+                        eprintln!("{}", e.display_with_source(Some(&line)));
                     }
                 }
                 Err(ReadlineError::Interrupted) => {
-                    println!("{}", "Use 'exit' or 'quit' to exit".yellow());
+                    println!("{}", "Use 'exit' or 'quit' to exit.".yellow());
                 }
                 Err(ReadlineError::Eof) => {
                     println!("{}", "Goodbye!".bright_green());
                     break;
                 }
                 Err(err) => {
-                    println!("{}: {}", "Error".bright_red(), err);
+                    eprintln!("{}: {}", "Error".bright_red(), err);
                     break;
                 }
             }
         }
-
         Ok(())
     }
 
-    fn execute_line(&mut self, line: &str) -> Result<()> {
-        // Tokenize
-        let mut lexer = Lexer::new(line);
-        let tokens = lexer
-            .tokenize()
-            .map_err(|e| CustomLangError::runtime_error(format!("Lexer error: {e}")))?;
-
-        // Parse
-        let mut parser = Parser::new(tokens);
-        let program = parser
-            .parse()
-            .map_err(|e| CustomLangError::runtime_error(format!("Parser error: {e}")))?;
-
-        // Execute
-        self.interpreter
-            .interpret(&program)
-            .map_err(|e| CustomLangError::runtime_error(format!("Runtime error: {e}")))?;
-
+    fn execute_line(&mut self, source: &str) -> Result<()> {
+        let tokens = Lexer::new(source).tokenize()?;
+        let program = Parser::new(tokens).parse()?;
+        if let Some(val) = self.interpreter.exec_repl(&program)? {
+            println!("{}", format!("=> {val}").bright_white());
+        }
         Ok(())
     }
 
     fn print_help(&self) {
         println!("{}", "Custom Language Help".bright_cyan().bold());
         println!();
-        println!("{}", "Language Features:".bright_yellow());
-        println!("  • Variables: let x = 42;");
-        println!("  • Arithmetic: +, -, *, /, %");
-        println!("  • Comparison: ==, !=, <, <=, >, >=");
-        println!("  • Logical: &&, ||, !");
-        println!("  • Control flow: if/else, while");
-        println!("  • Functions: function name(params) {{ ... }}");
-        println!("  • Print: print expression;");
+        println!("{}", "Syntax:".bright_yellow());
+        println!("  let x = 42;                    -- variable");
+        println!("  x += 1;                        -- compound assign");
+        println!("  if (x > 0) {{ ... }} else {{ ... }} -- conditional");
+        println!("  while (x > 0) {{ ... }}          -- while loop");
+        println!("  for (let i=0; i<n; i+=1) {{ }}  -- for loop");
+        println!("  for (item in arr) {{ }}          -- for-in loop");
+        println!("  function f(a, b) {{ return a+b; }} -- function");
+        println!("  let f = function(x) {{ x*2 }};  -- lambda");
+        println!("  class Dog extends Animal {{ ... }} -- class");
+        println!("  match x {{ 1 => ..., _ => ... }} -- pattern match");
         println!();
-        println!("{}", "Data Types:".bright_yellow());
-        println!("  • Numbers: 42, 3.14");
-        println!("  • Strings: \"hello world\"");
-        println!("  • Booleans: true, false");
-        println!("  • Null: null");
+        println!("{}", "Built-ins:".bright_yellow());
+        println!("  print, len, range, type, push, pop, filter, map, reduce");
+        println!("  floor, ceil, round, sqrt, pow, min, max, abs, log");
+        println!("  split, join, to_upper, to_lower, trim, contains");
+        println!("  read_file, write_file, append_file, input, now, assert");
         println!();
-        println!("{}", "REPL Commands:".bright_yellow());
-        println!("  • help    - Show this help");
-        println!("  • clear   - Clear the screen");
-        println!("  • exit    - Exit the REPL");
-        println!("  • quit    - Exit the REPL");
-        println!();
-        println!("{}", "Examples:".bright_yellow());
-        println!("  let x = 10;");
-        println!("  let y = x * 2;");
-        println!("  print x + y;");
-        println!("  if (x > 5) print \"x is greater than 5\";");
+        println!("{}", "REPL commands:".bright_yellow());
+        println!("  help   clear   exit   quit");
         println!();
     }
 }

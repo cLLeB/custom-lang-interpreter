@@ -13,6 +13,10 @@ categories = ["command-line-utilities", "development-tools", "parser-implementat
 readme = "README.md"
 rust-version = "1.70"
 
+[lib]
+name = "custom_lang"
+path = "src/lib.rs"
+
 [[bin]]
 name = "custom-lang"
 path = "src/main.rs"

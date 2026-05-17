@@ -1,30 +1,8 @@
-//! # Custom Language Interpreter
-//!
-//! A modern programming language interpreter built in Rust featuring:
-//! - Dynamic typing with comprehensive type system
-//! - Variables, expressions, and control flow
-//! - User-defined and built-in functions
-//! - Interactive REPL mode
-//! - Comprehensive error reporting with source context
-//! - Semantic analysis and type checking
-//!
-//! ## Usage
-//!
-//! ```bash
-//! # Run a program file
-//! custom-lang program.cl
-//!
-//! # Start interactive REPL
-//! custom-lang --repl
-//!
-//! # Enable verbose output
-//! custom-lang --verbose program.cl
-//! ```
-
 use clap::{Arg, Command};
 use std::fs;
 
 mod ast;
+mod env;
 mod error;
 mod interpreter;
 mod lexer;
@@ -36,33 +14,13 @@ use error::CustomLangError;
 use repl::Repl;
 use semantic::SemanticAnalyzer;
 
-/// Main entry point for the Custom Language Interpreter
-///
-/// Handles command-line argument parsing and dispatches to appropriate execution modes:
-/// - File execution mode for running .cl files
-/// - Interactive REPL mode for live coding
-/// - Help and version information display
 fn main() -> Result<(), CustomLangError> {
     let matches = Command::new("custom-lang")
-        .version("0.2.0")
-        .author("Custom Language Team <team@customlang.dev>")
-        .about("A custom programming language interpreter with comprehensive features")
-        .long_about(
-            "Custom Language Interpreter v0.1.0\n\
-                     \n\
-                     A modern programming language interpreter featuring:\n\
-                     • Dynamic typing with numbers, strings, booleans, and null\n\
-                     • Variables and expressions\n\
-                     • Control flow (if/else, while loops)\n\
-                     • User-defined and recursive functions\n\
-                     • Built-in functions (math, string, utility)\n\
-                     • Comprehensive error reporting\n\
-                     • Interactive REPL mode\n\
-                     • Semantic analysis and type checking",
-        )
+        .version("1.0.0")
+        .about("A custom programming language interpreter")
         .arg(
             Arg::new("file")
-                .help("The source file to execute (.cl extension)")
+                .help("Source file to execute (.cl)")
                 .value_name("FILE")
                 .index(1),
         )
@@ -70,7 +28,7 @@ fn main() -> Result<(), CustomLangError> {
             Arg::new("repl")
                 .short('r')
                 .long("repl")
-                .help("Start interactive REPL mode")
+                .help("Start interactive REPL")
                 .action(clap::ArgAction::SetTrue),
         )
         .arg(
@@ -83,7 +41,7 @@ fn main() -> Result<(), CustomLangError> {
         .arg(
             Arg::new("no-semantic")
                 .long("no-semantic")
-                .help("Skip semantic analysis (faster but less safe)")
+                .help("Skip semantic analysis")
                 .action(clap::ArgAction::SetTrue),
         )
         .get_matches();
@@ -92,155 +50,79 @@ fn main() -> Result<(), CustomLangError> {
     let no_semantic = matches.get_flag("no-semantic");
 
     if matches.get_flag("repl") {
-        if verbose {
-            println!("🚀 Starting Custom Language REPL...");
-            println!("📝 Type 'help' for available commands");
-            println!(
-                "🔧 Semantic analysis: {}",
-                if no_semantic { "disabled" } else { "enabled" }
-            );
-        } else {
-            println!("Starting Custom Language REPL...");
-        }
         let mut repl = Repl::new();
         repl.run()?;
     } else if let Some(filename) = matches.get_one::<String>("file") {
-        if verbose {
-            println!("📂 Executing file: {filename}");
-            println!(
-                "🔧 Semantic analysis: {}",
-                if no_semantic { "disabled" } else { "enabled" }
-            );
-        }
         execute_file(filename, verbose, no_semantic)?;
     } else {
-        print_welcome_message();
+        print_welcome();
     }
 
     Ok(())
 }
 
-/// Execute a Custom Language source file
-///
-/// # Arguments
-/// * `filename` - Path to the .cl source file to execute
-/// * `verbose` - Enable detailed execution logging
-/// * `no_semantic` - Skip semantic analysis for faster execution
-///
-/// # Returns
-/// * `Ok(())` on successful execution
-/// * `Err(CustomLangError)` on any compilation or runtime error
 fn execute_file(filename: &str, verbose: bool, no_semantic: bool) -> Result<(), CustomLangError> {
     let source = fs::read_to_string(filename)
-        .map_err(|e| CustomLangError::IoError(format!("Failed to read file '{filename}': {e}")))?;
+        .map_err(|e| CustomLangError::io_err(format!("Cannot read '{filename}': {e}")))?;
 
-    if verbose {
-        println!("📊 File size: {} bytes", source.len());
-        println!("📝 Lines of code: {}", source.lines().count());
-    }
-
-    if let Err(e) = execute_source(&source, verbose, no_semantic) {
-        eprintln!("{}", e.display_detailed(Some(&source)));
-        std::process::exit(1);
-    }
-
-    if verbose {
-        println!("✅ Execution completed successfully!");
-    }
-
-    Ok(())
-}
-
-/// Execute Custom Language source code through the complete compilation pipeline
-///
-/// This function orchestrates the complete execution pipeline:
-/// 1. Lexical analysis (tokenization)
-/// 2. Syntax analysis (parsing)
-/// 3. Semantic analysis (optional, for type checking)
-/// 4. Interpretation (execution)
-///
-/// # Arguments
-/// * `source` - The source code string to execute
-/// * `verbose` - Enable detailed logging of each compilation stage
-/// * `no_semantic` - Skip semantic analysis for faster execution
-///
-/// # Returns
-/// * `Ok(())` on successful execution
-/// * `Err(CustomLangError)` on any compilation or runtime error
-fn execute_source(source: &str, verbose: bool, no_semantic: bool) -> Result<(), CustomLangError> {
-    // Tokenize
-    if verbose {
-        println!("🔤 Tokenizing...");
-    }
-    let mut lexer = lexer::Lexer::new(source);
-    let tokens = lexer.tokenize()?;
-    if verbose {
-        println!("✅ Tokenization complete: {} tokens", tokens.len());
-    }
-
-    // Parse
-    if verbose {
-        println!("🌳 Parsing...");
-    }
-    let mut parser = parser::Parser::new(tokens);
-    let program = parser.parse()?;
     if verbose {
         println!(
-            "✅ Parsing complete: {} statements",
-            program.statements.len()
+            "File: {filename} ({} bytes, {} lines)",
+            source.len(),
+            source.lines().count()
         );
     }
 
-    // Semantic Analysis
-    if !no_semantic {
-        if verbose {
-            println!("🔍 Semantic analysis...");
-        }
-        let mut analyzer = SemanticAnalyzer::new();
-        analyzer.analyze(&program)?;
-        if verbose {
-            println!("✅ Semantic analysis complete");
-        }
-    } else if verbose {
-        println!("⚠️  Semantic analysis skipped");
+    if let Err(e) = execute_source(&source, verbose, no_semantic) {
+        eprintln!("{}", e.display_with_source(Some(&source)));
+        std::process::exit(1);
     }
-
-    // Execute
-    if verbose {
-        println!("⚡ Executing...");
-    }
-    let mut interpreter = interpreter::Interpreter::new();
-    interpreter.interpret(&program)?;
-    if verbose {
-        println!("✅ Execution complete");
-    }
-
     Ok(())
 }
 
-fn print_welcome_message() {
-    println!("🎉 Custom Language Interpreter v0.2.0");
+fn execute_source(source: &str, verbose: bool, no_semantic: bool) -> Result<(), CustomLangError> {
+    if verbose {
+        println!("Tokenizing...");
+    }
+    let tokens = lexer::Lexer::new(source).tokenize()?;
+    if verbose {
+        println!("{} tokens", tokens.len());
+    }
+
+    if verbose {
+        println!("Parsing...");
+    }
+    let program = parser::Parser::new(tokens).parse()?;
+    if verbose {
+        println!("{} statements", program.stmts.len());
+    }
+
+    if !no_semantic {
+        if verbose {
+            println!("Semantic analysis...");
+        }
+        SemanticAnalyzer::new().analyze(&program)?;
+    }
+
+    if verbose {
+        println!("Executing...");
+    }
+    interpreter::Interpreter::new().interpret(&program)?;
+    Ok(())
+}
+
+fn print_welcome() {
+    println!("Custom Language Interpreter v1.0.0");
     println!();
-    println!("📚 A modern programming language with comprehensive features:");
-    println!("   • Dynamic typing (numbers, strings, booleans, null, arrays)");
-    println!("   • Variables and expressions");
-    println!("   • Control flow (if/else, while loops)");
-    println!("   • User-defined and recursive functions");
-    println!("   • Built-in functions (math, string, utility, arrays)");
-    println!("   • Arrays with indexing and manipulation");
-    println!("   • Comprehensive error reporting");
-    println!("   • Interactive REPL mode");
-    println!("   • Semantic analysis and type checking");
+    println!("Usage:");
+    println!("  custom-lang <file.cl>    Execute a source file");
+    println!("  custom-lang --repl       Start interactive REPL");
+    println!("  custom-lang --help       Show help");
     println!();
-    println!("🚀 Usage:");
-    println!("   custom-lang <file.cl>     Execute a source file");
-    println!("   custom-lang --repl       Start interactive mode");
-    println!("   custom-lang --help       Show detailed help");
-    println!();
-    println!("📖 Examples:");
-    println!("   custom-lang examples/test.cl");
-    println!("   custom-lang --repl --verbose");
-    println!("   custom-lang program.cl --no-semantic");
-    println!();
-    println!("💡 Try the REPL for interactive experimentation!");
+    println!("Features:");
+    println!("  Numbers, strings, booleans, null, arrays, objects");
+    println!("  Variables, functions, lambdas, closures, classes");
+    println!("  for/while/for-in loops, break/continue");
+    println!("  Pattern matching, imports, modules");
+    println!("  50+ built-in functions");
 }
