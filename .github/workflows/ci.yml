@@ -376,6 +376,8 @@ jobs:
     name: Build Release Binaries (${{ matrix.name }})
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs: [quality, security, cross-platform, docs]
+    permissions:
+      contents: write
     strategy:
       matrix:
         include:
@@ -433,6 +435,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: [build-release]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
 
     steps:
     - name: Checkout code
@@ -459,7 +463,6 @@ jobs:
           release-assets/custom-lang-macos-x86_64
           release-assets/custom-lang-macos-arm64
           custom-lang-${{ github.ref_name }}-examples.tar.gz
-        generate_release_notes: true
         draft: false
         prerelease: false
         body: |
