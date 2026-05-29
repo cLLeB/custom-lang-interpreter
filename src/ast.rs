@@ -43,10 +43,32 @@ pub enum Value {
     Instance(Rc<RefCell<InstanceData>>),
 }
 
+/// A single function parameter (name + optional default + rest flag)
+#[derive(Debug, Clone)]
+pub struct Param {
+    pub name: String,
+    pub default: Option<Expr>,
+    pub is_rest: bool,
+}
+
+impl Param {
+    pub fn simple(name: impl Into<String>) -> Self {
+        Self { name: name.into(), default: None, is_rest: false }
+    }
+    #[allow(dead_code)]
+    pub fn with_default(name: impl Into<String>, default: Expr) -> Self {
+        Self { name: name.into(), default: Some(default), is_rest: false }
+    }
+    #[allow(dead_code)]
+    pub fn rest(name: impl Into<String>) -> Self {
+        Self { name: name.into(), default: None, is_rest: true }
+    }
+}
+
 #[derive(Debug)]
 pub struct FnData {
     pub name: String,
-    pub params: Vec<String>,
+    pub params: Vec<Param>,
     pub body: Box<Stmt>,
     /// The captured environment at the time the function was defined
     pub closure: EnvRef,
@@ -56,6 +78,8 @@ pub struct FnData {
 pub struct ClassData {
     pub name: String,
     pub methods: HashMap<String, Rc<FnData>>,
+    pub static_methods: HashMap<String, Rc<FnData>>,
+    pub static_fields: HashMap<String, Value>,
     pub superclass: Option<Rc<ClassData>>,
 }
 
@@ -122,6 +146,21 @@ impl Value {
     pub fn make_object(pairs: HashMap<String, Value>) -> Value {
         Value::Object(Rc::new(RefCell::new(pairs)))
     }
+
+    /// Check if this value is an instance of the named class
+    pub fn is_instance_of(&self, class_name: &str) -> bool {
+        if let Value::Instance(inst) = self {
+            let inst = inst.borrow();
+            let mut cls = Some(Rc::clone(&inst.class));
+            while let Some(c) = cls {
+                if c.name == class_name {
+                    return true;
+                }
+                cls = c.superclass.clone();
+            }
+        }
+        false
+    }
 }
 
 impl fmt::Display for Value {
@@ -181,6 +220,13 @@ pub enum BinaryOp {
     Multiply,
     Divide,
     Modulo,
+    Power,          // **
+    BitwiseAnd,     // &
+    BitwiseOr,      // |
+    BitwiseXor,     // ^
+    ShiftLeft,      // <<
+    ShiftRight,     // >>
+    ShiftRightU,    // >>> (unsigned)
     Equal,
     NotEqual,
     Less,
@@ -189,12 +235,17 @@ pub enum BinaryOp {
     GreaterEqual,
     And,
     Or,
+    NullCoalesce,   // ??
+    In,             // in
+    Instanceof,     // instanceof
 }
 
 #[derive(Debug, Clone)]
 pub enum UnaryOp {
     Minus,
     Not,
+    BitwiseNot,     // ~
+    Typeof,         // typeof
 }
 
 #[derive(Debug, Clone)]
@@ -204,6 +255,15 @@ pub enum CompoundOp {
     Multiply,
     Divide,
     Modulo,
+    Power,          // **=
+    BitAnd,         // &=
+    BitOr,          // |=
+    BitXor,         // ^=
+    ShiftLeft,      // <<=
+    ShiftRight,     // >>=
+    NullCoalesce,   // ??=
+    LogicalOr,      // ||=
+    LogicalAnd,     // &&=
 }
 
 impl CompoundOp {
@@ -214,6 +274,15 @@ impl CompoundOp {
             CompoundOp::Multiply => BinaryOp::Multiply,
             CompoundOp::Divide => BinaryOp::Divide,
             CompoundOp::Modulo => BinaryOp::Modulo,
+            CompoundOp::Power => BinaryOp::Power,
+            CompoundOp::BitAnd => BinaryOp::BitwiseAnd,
+            CompoundOp::BitOr => BinaryOp::BitwiseOr,
+            CompoundOp::BitXor => BinaryOp::BitwiseXor,
+            CompoundOp::ShiftLeft => BinaryOp::ShiftLeft,
+            CompoundOp::ShiftRight => BinaryOp::ShiftRight,
+            CompoundOp::NullCoalesce => BinaryOp::NullCoalesce,
+            CompoundOp::LogicalOr => BinaryOp::Or,
+            CompoundOp::LogicalAnd => BinaryOp::And,
         }
     }
 }
@@ -222,6 +291,7 @@ impl CompoundOp {
 #[derive(Debug, Clone)]
 pub struct MatchArm {
     pub pattern: Pattern,
+    pub guard: Option<Expr>,
     pub body: Expr,
 }
 
@@ -282,6 +352,12 @@ pub enum Expr {
         expr: Box<Expr>,
         pos: Position,
     },
+    Ternary {
+        cond: Box<Expr>,
+        then_e: Box<Expr>,
+        else_e: Box<Expr>,
+        pos: Position,
+    },
     Call {
         callee: Box<Expr>,
         args: Vec<Expr>,
@@ -297,24 +373,46 @@ pub enum Expr {
         name: String,
         pos: Position,
     },
+    OptionalProp {
+        object: Box<Expr>,
+        name: String,
+        pos: Position,
+    },
+    OptionalIndex {
+        object: Box<Expr>,
+        index: Box<Expr>,
+        pos: Position,
+    },
+    OptionalCall {
+        callee: Box<Expr>,
+        args: Vec<Expr>,
+        pos: Position,
+    },
     Array {
         elements: Vec<Expr>,
         pos: Position,
     },
     Object {
-        pairs: Vec<(String, Expr)>,
+        pairs: Vec<(ObjectKey, Expr)>,
+        pos: Position,
+    },
+    Spread {
+        expr: Box<Expr>,
         pos: Position,
     },
     New {
-        class: String,
+        class: Box<Expr>,
         args: Vec<Expr>,
         pos: Position,
     },
     This {
         pos: Position,
     },
+    Super {
+        pos: Position,
+    },
     Lambda {
-        params: Vec<String>,
+        params: Vec<Param>,
         body: Box<Stmt>,
         pos: Position,
     },
@@ -323,6 +421,13 @@ pub enum Expr {
         arms: Vec<MatchArm>,
         pos: Position,
     },
+}
+
+/// Object literal key — static string or computed expression
+#[derive(Debug, Clone)]
+pub enum ObjectKey {
+    Static(String),
+    Computed(Box<Expr>),
 }
 
 impl Expr {
@@ -336,13 +441,19 @@ impl Expr {
             | Expr::PropAssign { pos, .. }
             | Expr::Binary { pos, .. }
             | Expr::Unary { pos, .. }
+            | Expr::Ternary { pos, .. }
             | Expr::Call { pos, .. }
             | Expr::Index { pos, .. }
             | Expr::Prop { pos, .. }
+            | Expr::OptionalProp { pos, .. }
+            | Expr::OptionalIndex { pos, .. }
+            | Expr::OptionalCall { pos, .. }
             | Expr::Array { pos, .. }
             | Expr::Object { pos, .. }
+            | Expr::Spread { pos, .. }
             | Expr::New { pos, .. }
             | Expr::This { pos }
+            | Expr::Super { pos }
             | Expr::Lambda { pos, .. }
             | Expr::Match { pos, .. } => pos,
         }
@@ -377,6 +488,11 @@ pub enum Stmt {
         body: Box<Stmt>,
         pos: Position,
     },
+    DoWhile {
+        body: Box<Stmt>,
+        cond: Expr,
+        pos: Position,
+    },
     For {
         init: Option<Box<Stmt>>,
         cond: Option<Expr>,
@@ -392,8 +508,9 @@ pub enum Stmt {
     },
     Function {
         name: String,
-        params: Vec<String>,
+        params: Vec<Param>,
         body: Box<Stmt>,
+        is_static: bool,
         pos: Position,
     },
     Return {
@@ -425,6 +542,17 @@ pub enum Stmt {
         methods: Vec<Stmt>,
         pos: Position,
     },
+    TryCatch {
+        try_b: Box<Stmt>,
+        catch_var: Option<String>,
+        catch_b: Option<Box<Stmt>>,
+        finally_b: Option<Box<Stmt>>,
+        pos: Position,
+    },
+    Throw {
+        value: Expr,
+        pos: Position,
+    },
 }
 
 impl Stmt {
@@ -436,6 +564,7 @@ impl Stmt {
             | Stmt::Block { pos, .. }
             | Stmt::If { pos, .. }
             | Stmt::While { pos, .. }
+            | Stmt::DoWhile { pos, .. }
             | Stmt::For { pos, .. }
             | Stmt::ForIn { pos, .. }
             | Stmt::Function { pos, .. }
@@ -445,7 +574,9 @@ impl Stmt {
             | Stmt::Print { pos, .. }
             | Stmt::Import { pos, .. }
             | Stmt::Export { pos, .. }
-            | Stmt::Class { pos, .. } => pos,
+            | Stmt::Class { pos, .. }
+            | Stmt::TryCatch { pos, .. }
+            | Stmt::Throw { pos, .. } => pos,
         }
     }
 }

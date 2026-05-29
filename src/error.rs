@@ -48,6 +48,9 @@ pub enum CustomLangError {
 
     #[error("Stack overflow: maximum call depth exceeded")]
     StackOverflow,
+
+    #[error("unhandled exception")]
+    ThrownException,
 }
 
 fn format_suggestion(s: &Option<String>) -> String {

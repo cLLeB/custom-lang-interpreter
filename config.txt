@@ -1,1 +1,5 @@
-# Custom Language Configuration\ndebug_mode=true\nmax_iterations=1000\noutput_format=json\n# End of configuration
+# Custom Language Configuration
+debug_mode=true
+max_iterations=1000
+output_format=json
+# End of configuration

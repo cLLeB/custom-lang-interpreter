@@ -207,7 +207,7 @@ impl SemanticAnalyzer {
                 self.define(name, Type::Function);
                 self.push_scope();
                 for p in params {
-                    self.define(p, Type::Unknown);
+                    self.define(&p.name, Type::Unknown);
                 }
                 let was_fn = self.in_function;
                 self.in_function = true;
@@ -342,6 +342,30 @@ impl SemanticAnalyzer {
                     self.error_undef(name);
                 }
             }
+            Stmt::DoWhile { body, cond, .. } => {
+                let was_loop = self.in_loop;
+                self.in_loop = true;
+                self.check_stmt(body);
+                self.in_loop = was_loop;
+                self.check_expr(cond);
+            }
+            Stmt::TryCatch { try_b, catch_var, catch_b, finally_b, .. } => {
+                self.check_stmt(try_b);
+                if let Some(cb) = catch_b {
+                    self.push_scope();
+                    if let Some(var) = catch_var {
+                        self.define(var, Type::Unknown);
+                    }
+                    self.check_stmt(cb);
+                    self.pop_scope();
+                }
+                if let Some(fb) = finally_b {
+                    self.check_stmt(fb);
+                }
+            }
+            Stmt::Throw { value, .. } => {
+                self.check_expr(value);
+            }
         }
     }
 
@@ -416,10 +440,7 @@ impl SemanticAnalyzer {
                 self.check_expr(index);
                 Type::Unknown
             }
-            Expr::Prop { object, .. } => {
-                self.check_expr(object);
-                Type::Unknown
-            }
+            Expr::Prop { object, .. } => { self.check_expr(object); Type::Unknown }
             Expr::Array { elements, .. } => {
                 for e in elements {
                     self.check_expr(e);
@@ -442,7 +463,7 @@ impl SemanticAnalyzer {
             Expr::Lambda { params, body, .. } => {
                 self.push_scope();
                 for p in params {
-                    self.define(p, Type::Unknown);
+                    self.define(&p.name, Type::Unknown);
                 }
                 let was_fn = self.in_function;
                 self.in_function = true;
@@ -456,11 +477,34 @@ impl SemanticAnalyzer {
                 for arm in arms {
                     self.push_scope();
                     self.define_pattern_bindings(&arm.pattern);
+                    if let Some(guard) = &arm.guard { self.check_expr(guard); }
                     self.check_expr(&arm.body);
                     self.pop_scope();
                 }
                 Type::Unknown
             }
+            Expr::Ternary { cond, then_e, else_e, .. } => {
+                self.check_expr(cond);
+                self.check_expr(then_e);
+                self.check_expr(else_e);
+                Type::Unknown
+            }
+            Expr::OptionalProp { object, .. } => {
+                self.check_expr(object);
+                Type::Unknown
+            }
+            Expr::OptionalIndex { object, index, .. } => {
+                self.check_expr(object);
+                self.check_expr(index);
+                Type::Unknown
+            }
+            Expr::OptionalCall { callee, args, .. } => {
+                self.check_expr(callee);
+                for a in args { self.check_expr(a); }
+                Type::Unknown
+            }
+            Expr::Spread { expr, .. } => { self.check_expr(expr); Type::Unknown }
+            Expr::Super { .. } => Type::Unknown,
         }
     }
 
