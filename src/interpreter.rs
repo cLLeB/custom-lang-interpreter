@@ -17,7 +17,7 @@ pub enum Signal {
     Break,
     Continue,
     BreakLabel(String),
-    ContinueLabel(String),
+    ContinueLabel(()),
 }
 
 pub struct Interpreter {
@@ -74,11 +74,13 @@ impl Interpreter {
     }
 
     /// Set a global variable directly (for embedding API)
+    #[allow(dead_code)]
     pub fn set_global(&mut self, name: &str, value: Value) {
         Env::define(&self.env, name, value);
     }
 
     /// Get a global variable (for embedding API)
+    #[allow(dead_code)]
     pub fn get_global(&self, name: &str) -> Option<Value> {
         Env::get(&self.env, name)
     }
@@ -91,6 +93,7 @@ impl Interpreter {
     }
 
     /// Call a named function with args (for embedding API)
+    #[allow(dead_code)]
     pub fn call_fn_by_name(&mut self, name: &str, args: Vec<Value>) -> crate::error::Result<Value> {
         let func =
             Env::get(&self.env, name).ok_or_else(|| CustomLangError::undef_var(name, None))?;
@@ -484,8 +487,8 @@ impl Interpreter {
                 }
             }
             Stmt::Continue { label, .. } => {
-                if let Some(l) = label {
-                    Ok(Signal::ContinueLabel(l.clone()))
+                if label.is_some() {
+                    Ok(Signal::ContinueLabel(()))
                 } else {
                     Ok(Signal::Continue)
                 }
@@ -1262,8 +1265,7 @@ impl Interpreter {
             (Value::Array(arr), Value::Number(n)) => {
                 let len = arr.borrow().len();
                 let i = if *n < 0.0 {
-                    let i = (len as f64 + n) as usize;
-                    i
+                    (len as f64 + n) as usize
                 } else {
                     *n as usize
                 };
@@ -1568,7 +1570,7 @@ impl Interpreter {
                 // Regular object called as function â€” check for __call__ method
                 let call_method = { obj.borrow().get("__call__").cloned() };
                 if let Some(m) = call_method {
-                    return self.call_value(m, args, Some(Value::Object(Rc::clone(&obj))), pos);
+                    return self.call_value(m, args, Some(Value::Object(Rc::clone(obj))), pos);
                 }
                 Err(CustomLangError::type_err("cannot call object as function").with_pos(pos))
             }
@@ -1655,12 +1657,10 @@ impl Interpreter {
                             let v = self.eval_expr(default_expr).unwrap_or(Value::Null);
                             self.env = outer;
                             v
+                        } else if i < args.len() {
+                            args[i].clone()
                         } else {
-                            if i < args.len() {
-                                args[i].clone()
-                            } else {
-                                Value::Null
-                            }
+                            Value::Null
                         }
                     })
                 } else if let Some(default_expr) = &param.default {
@@ -1668,12 +1668,10 @@ impl Interpreter {
                     let default_val = self.eval_expr(default_expr);
                     self.env = outer;
                     default_val?
+                } else if i < args.len() {
+                    args[i].clone()
                 } else {
-                    if i < args.len() {
-                        args[i].clone()
-                    } else {
-                        Value::Null
-                    }
+                    Value::Null
                 };
                 Env::define(&fn_env, &param.name, val);
             }
@@ -1715,7 +1713,7 @@ impl Interpreter {
                 for stmt in stmts {
                     match self.collect_generator_yields(stmt, yielded) {
                         Ok(()) => {}
-                        Err(e) if matches!(e, CustomLangError::ThrownException) => {
+                        Err(CustomLangError::ThrownException) => {
                             if let Some(v) = self.thrown_value.take() {
                                 yielded.push(v);
                             }
@@ -4788,7 +4786,7 @@ impl Interpreter {
                         for item in &items {
                             if let Value::Array(pair) = item {
                                 let p = pair.borrow();
-                                a.push(p.get(0).cloned().unwrap_or(Value::Null));
+                                a.push(p.first().cloned().unwrap_or(Value::Null));
                                 b.push(p.get(1).cloned().unwrap_or(Value::Null));
                             }
                         }
@@ -5145,13 +5143,10 @@ impl Interpreter {
             "obj_merge" => {
                 let mut map = HashMap::new();
                 for arg in &args {
-                    match arg {
-                        Value::Object(o) => {
-                            for (k, v) in o.borrow().iter() {
-                                map.insert(k.clone(), v.clone());
-                            }
+                    if let Value::Object(o) = arg {
+                        for (k, v) in o.borrow().iter() {
+                            map.insert(k.clone(), v.clone());
                         }
-                        _ => {}
                     }
                 }
                 Ok(Value::make_object(map))
@@ -5355,7 +5350,7 @@ impl Interpreter {
                         for item in arr.borrow().iter() {
                             if let Value::Array(pair) = item {
                                 let p = pair.borrow();
-                                if let (Some(Value::Str(k)), Some(v)) = (p.get(0), p.get(1)) {
+                                if let (Some(Value::Str(k)), Some(v)) = (p.first(), p.get(1)) {
                                     map.insert(k.clone(), v.clone());
                                 }
                             }
@@ -5961,7 +5956,7 @@ impl Interpreter {
                 match &args[0] {
                     Value::Str(s) => base64_decode(s)
                         .map(|b| Value::Str(String::from_utf8_lossy(&b).to_string()))
-                        .map_err(|e| CustomLangError::runtime(e)),
+                        .map_err(CustomLangError::runtime),
                     _ => Err(CustomLangError::type_err("base64_decode() requires string")),
                 }
             }
@@ -5978,7 +5973,7 @@ impl Interpreter {
                 match &args[0] {
                     Value::Str(s) => hex_decode(s)
                         .map(|b| Value::Str(String::from_utf8_lossy(&b).to_string()))
-                        .map_err(|e| CustomLangError::runtime(e)),
+                        .map_err(CustomLangError::runtime),
                     _ => Err(CustomLangError::type_err("hex_decode() requires string")),
                 }
             }
@@ -6795,16 +6790,14 @@ impl Interpreter {
                     return err_argc("1");
                 }
                 let cb = args[0].clone();
-                let mut resolved = Value::Null;
-                let mut rejected = Value::Null;
                 // Synchronously execute the promise
                 let resolve_fn = Value::Builtin("__promise_resolve__".to_string());
                 let reject_fn = Value::Builtin("__promise_reject__".to_string());
                 Env::define(&self.env, "__promise_resolved__", Value::Null);
                 Env::define(&self.env, "__promise_rejected__", Value::Null);
                 let _ = self.call_value(cb, vec![resolve_fn, reject_fn], None, pos);
-                resolved = Env::get(&self.env, "__promise_resolved__").unwrap_or(Value::Null);
-                rejected = Env::get(&self.env, "__promise_rejected__").unwrap_or(Value::Null);
+                let resolved = Env::get(&self.env, "__promise_resolved__").unwrap_or(Value::Null);
+                let rejected = Env::get(&self.env, "__promise_rejected__").unwrap_or(Value::Null);
                 let mut map = HashMap::new();
                 map.insert("value".to_string(), resolved);
                 map.insert("error".to_string(), rejected);
@@ -7045,12 +7038,10 @@ impl Interpreter {
                             o.borrow_mut()
                                 .insert("size".to_string(), Value::Number(0.0));
                             Ok(Value::Null)
+                        } else if let Some(Value::Object(d)) = data {
+                            Ok(Value::Object(d))
                         } else {
-                            if let Some(Value::Object(d)) = data {
-                                Ok(Value::Object(d))
-                            } else {
-                                Ok(Value::make_object(HashMap::new()))
-                            }
+                            Ok(Value::make_object(HashMap::new()))
                         }
                     }
                     _ => Err(CustomLangError::type_err("map operation requires Map")),
@@ -7430,11 +7421,10 @@ impl Interpreter {
                         let handler = o.borrow().get("_handler").cloned().unwrap_or(Value::Null);
                         let state = o.borrow().get("_state").cloned().unwrap_or(Value::Null);
                         // Create a reply capture
-                        let mut reply_val = Value::Null;
-                        let mut msg = args[1].clone();
-                        if let Value::Object(ref m) = msg {
+                        let msg = args[1].clone();
+                        if let Value::Object(_) = msg {
                             let captured_reply = Rc::new(RefCell::new(Value::Null));
-                            let captured_clone = Rc::clone(&captured_reply);
+                            let _captured_clone = Rc::clone(&captured_reply);
                             // Can't easily inject reply function; just call handler and return state
                             let new_state =
                                 self.call_value(handler, vec![state.clone(), msg], None, pos)?;
@@ -7524,7 +7514,6 @@ impl Interpreter {
                 }
                 // Simple: call function with an escape continuation
                 let cb = args[0].clone();
-                let mut escape_val = Value::Null;
                 let escape_fn = Value::Builtin("__escape__".to_string());
                 Env::define(&self.env, "__escape_triggered__", Value::Bool(false));
                 Env::define(&self.env, "__escape_value__", Value::Null);
@@ -7592,7 +7581,7 @@ impl Interpreter {
                 let a = lcg_rand(42);
                 let b = lcg_rand(a as u32);
                 let c = lcg_rand(b as u32);
-                let d = lcg_rand(c as u32);
+                let _d = lcg_rand(c as u32);
                 Ok(Value::Str(format!(
                     "{:08x}-{:04x}-4{:03x}-{:04x}-{:012x}",
                     a as u32,
@@ -8572,35 +8561,34 @@ fn apply_format_spec(val: &Value, spec: &str) -> String {
             let prec: usize = spec[1..spec.len() - 1].parse().unwrap_or(2);
             return format!("{:.prec$}", n);
         }
-        if spec.ends_with('x') {
-            let width: usize = spec[..spec.len() - 1].parse().unwrap_or(0);
+        if let Some(rest) = spec.strip_suffix('x') {
+            let width: usize = rest.parse().unwrap_or(0);
             return format!("{:0>width$x}", *n as i64);
         }
         if spec.ends_with('b') {
             return format!("{:b}", *n as i64);
         }
-        if spec.ends_with('d') {
-            let pad_spec = &spec[..spec.len() - 1];
+        if let Some(pad_spec) = spec.strip_suffix('d') {
             if pad_spec.starts_with('0') {
                 let width: usize = pad_spec.parse().unwrap_or(0);
                 return format!("{:0>width$}", *n as i64);
             }
         }
-        if spec.starts_with('>') {
-            let width: usize = spec[1..].parse().unwrap_or(0);
+        if let Some(rest) = spec.strip_prefix('>') {
+            let width: usize = rest.parse().unwrap_or(0);
             return format!("{:>width$}", val.to_string());
         }
-        if spec.starts_with('<') {
-            let width: usize = spec[1..].parse().unwrap_or(0);
+        if let Some(rest) = spec.strip_prefix('<') {
+            let width: usize = rest.parse().unwrap_or(0);
             return format!("{:<width$}", val.to_string());
         }
     }
-    if spec.starts_with('>') {
-        let width: usize = spec[1..].parse().unwrap_or(0);
+    if let Some(rest) = spec.strip_prefix('>') {
+        let width: usize = rest.parse().unwrap_or(0);
         return format!("{:>width$}", val.to_string());
     }
-    if spec.starts_with('<') {
-        let width: usize = spec[1..].parse().unwrap_or(0);
+    if let Some(rest) = spec.strip_prefix('<') {
+        let width: usize = rest.parse().unwrap_or(0);
         return format!("{:<width$}", val.to_string());
     }
     val.to_string()

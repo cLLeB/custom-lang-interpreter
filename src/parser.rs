@@ -449,7 +449,7 @@ impl Parser {
                 }
             }
             self.expect(&TokenKind::RBrace, "expected '}'")?;
-            if self.match_tok(&TokenKind::From) || self.match_ident("from") {}
+            let _ = self.match_tok(&TokenKind::From) || self.match_ident("from");
             let path = match self.peek().kind.clone() {
                 TokenKind::Str(s) => {
                     self.advance();
@@ -469,7 +469,7 @@ impl Parser {
         if self.match_tok(&TokenKind::Star) {
             self.match_ident("as");
             let alias = Some(self.expect_ident("expected namespace name")?);
-            if self.match_tok(&TokenKind::From) || self.match_ident("from") {}
+            let _ = self.match_tok(&TokenKind::From) || self.match_ident("from");
             let path = match self.peek().kind.clone() {
                 TokenKind::Str(s) => {
                     self.advance();
@@ -1053,14 +1053,7 @@ impl Parser {
                     right: Box::new(self.shift()?),
                     pos,
                 };
-            } else if self.match_tok(&TokenKind::Instanceof) {
-                expr = Expr::Binary {
-                    left: Box::new(expr),
-                    op: BinaryOp::Instanceof,
-                    right: Box::new(self.shift()?),
-                    pos,
-                };
-            } else if self.match_ident("is") {
+            } else if self.match_tok(&TokenKind::Instanceof) || self.match_ident("is") {
                 expr = Expr::Binary {
                     left: Box::new(expr),
                     op: BinaryOp::Instanceof,

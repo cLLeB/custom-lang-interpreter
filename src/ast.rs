@@ -77,6 +77,7 @@ pub struct FnData {
     pub body: Box<Stmt>,
     pub closure: EnvRef,
     pub is_generator: bool,
+    #[allow(dead_code)]
     pub is_async: bool,
 }
 

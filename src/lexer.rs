@@ -49,6 +49,7 @@ pub enum TokenKind {
     From,
     Get,
     Set,
+    #[allow(dead_code)]
     Of_,
 
     // Operators

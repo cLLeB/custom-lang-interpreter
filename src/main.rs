@@ -315,8 +315,8 @@ fn extract_docs(source: &str) -> String {
     let mut doc_comment = String::new();
     for line in source.lines() {
         let trimmed = line.trim();
-        if trimmed.starts_with("///") {
-            doc_comment.push_str(&trimmed[3..].trim());
+        if let Some(rest) = trimmed.strip_prefix("///") {
+            doc_comment.push_str(rest.trim());
             doc_comment.push('\n');
         } else if !doc_comment.is_empty() && trimmed.starts_with("function ") {
             let name = trimmed
@@ -427,7 +427,7 @@ fn stmt_to_js(stmt: &ast::Stmt) -> String {
                 .join("\n");
             format!("{{\n{}\n}}", inner)
         }
-        _ => format!("/* stmt */"),
+        _ => "/* stmt */".to_string(),
     }
 }
 
