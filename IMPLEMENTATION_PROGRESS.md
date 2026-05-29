@@ -47,8 +47,9 @@
 ---
 
 ## Build Status
-- Last build: 🔄 In Progress
-- Tests: ⏳ Not yet run
+- Last build: ✅ Clean (0 errors, 0 warnings)
+- Tests: ✅ 35/35 passing
+- Commit: `af1ba14` — feat: implement Phase 1 core syntax + std library modules
 
 ## Changes Made
 - `error.rs`: Added `ThrownException` variant

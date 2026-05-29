@@ -61,79 +61,50 @@ impl SemanticAnalyzer {
 
     fn register_builtins(&mut self) {
         let builtins = [
-            "print",
-            "println",
-            "input",
-            "len",
-            "type",
-            "range",
-            "push",
-            "pop",
-            "shift",
-            "unshift",
-            "first",
-            "last",
-            "sort",
-            "reverse",
-            "slice",
-            "includes",
-            "find",
-            "index_of",
-            "filter",
-            "map",
-            "reduce",
-            "for_each",
-            "every",
-            "some",
-            "keys",
-            "values",
-            "entries",
-            "has_key",
-            "delete_key",
-            "split",
-            "join",
-            "substring",
-            "to_upper",
-            "to_lower",
-            "trim",
-            "trim_start",
-            "trim_end",
-            "starts_with",
-            "ends_with",
-            "contains",
-            "replace",
-            "char_at",
-            "char_code",
-            "format",
-            "abs",
-            "sqrt",
-            "pow",
-            "min",
-            "max",
-            "floor",
-            "ceil",
-            "round",
-            "log",
-            "sin",
-            "cos",
-            "tan",
-            "to_string",
-            "to_number",
-            "to_bool",
-            "parse_int",
-            "parse_float",
-            "is_number",
-            "is_string",
-            "is_bool",
-            "is_null",
-            "is_array",
-            "is_object",
-            "read_file",
-            "write_file",
-            "append_file",
-            "assert",
-            "exit",
-            "now",
+            "print","println","input","len","type","range","push","pop","shift","unshift",
+            "first","last","sort","reverse","slice","includes","find","index_of","filter","map",
+            "reduce","for_each","every","some","keys","values","entries","has_key","delete_key",
+            "split","join","substring","to_upper","to_lower","trim","trim_start","trim_end",
+            "starts_with","ends_with","contains","replace","char_at","char_code","format",
+            "abs","sqrt","pow","min","max","floor","ceil","round","log","sin","cos","tan",
+            "to_string","to_number","to_bool","parse_int","parse_float",
+            "is_number","is_string","is_bool","is_null","is_array","is_object",
+            "read_file","write_file","append_file","assert","exit","now",
+            // New builtins
+            "json_parse","json_stringify","json_is_valid",
+            "random_float","random_int","random_bool","random_choice","random_shuffle",
+            "math_clamp","math_sign","math_hypot","math_gcd","math_lcm","math_factorial",
+            "math_is_nan","math_is_finite","math_lerp","math_degrees","math_radians",
+            "math_atan2","math_asin","math_acos","math_atan","math_exp","math_log2","math_log10","math_cbrt","math_trunc",
+            "flat","flat_map","zip","chunk","unique","count","sum","average","repeat","pad_start","pad_end",
+            "arr_unzip","arr_group_by","arr_partition","arr_rotate","arr_take","arr_drop",
+            "arr_take_while","arr_drop_while","arr_flatten_deep","arr_fill","arr_fill_with",
+            "arr_min_by","arr_max_by","arr_sort_by","arr_difference","arr_intersection","arr_union",
+            "obj_merge","obj_deep_clone","obj_get_path","obj_set_path","obj_omit","obj_pick",
+            "obj_map_values","obj_map_keys","obj_filter_values","obj_invert","obj_from_entries",
+            "str_at","str_last_index_of","str_char_codes","str_from_char_codes",
+            "str_is_digit","str_is_alpha","str_is_alnum","str_is_whitespace",
+            "str_is_upper","str_is_lower","str_count_occurrences","str_reverse","str_word_count","str_lines",
+            "fs_read_text","fs_write_text","fs_append_text","fs_exists","fs_delete","fs_rename","fs_copy",
+            "fs_mkdir","fs_mkdir_all","fs_rmdir","fs_list_dir","fs_is_file","fs_is_dir",
+            "fs_file_size","fs_last_modified","fs_temp_file","fs_temp_dir",
+            "path_join","path_dirname","path_basename","path_stem","path_extension",
+            "path_absolute","path_normalize","path_split","path_is_absolute",
+            "proc_args","proc_env","proc_env_all","proc_cwd","proc_chdir","proc_pid","proc_platform","proc_run",
+            "http_get","http_post","http_put","http_delete","http_patch",
+            "enc_url_encode","enc_url_decode","enc_html_encode","enc_html_decode",
+            "crypto_sha256","crypto_sha512","crypto_md5","crypto_hmac_sha256",
+            "crypto_base64_encode","crypto_base64_decode","crypto_hex_encode","crypto_hex_decode",
+            "crypto_random_bytes","crypto_compare_secure",
+            "regex_new","regex_test","regex_match","regex_match_all","regex_replace","regex_replace_all",
+            "dt_now","dt_from_timestamp","dt_new","dt_format","dt_parse",
+            "coll_queue","coll_stack","coll_deque","coll_linked_list",
+            "test_run","test_describe","test_assert_eq","test_assert_neq","test_assert_throws",
+            "test_assert_true","test_assert_false","test_before_each","test_after_each",
+            "partial","curry","compose","pipe_fn","memoize","update","set_at","deep_freeze",
+            "weakmap_new","weakref_new","gen_next","gen_to_array",
+            "get_type","is_function","is_class","is_instance","instanceof_check",
+            "Promise","Ok","Err","Some","None_val","is_ok","is_err","unwrap","unwrap_or","fmt",
         ];
         let scope = self.scopes.last_mut().expect("always a scope");
         for name in &builtins {
@@ -363,9 +334,45 @@ impl SemanticAnalyzer {
                     self.check_stmt(fb);
                 }
             }
-            Stmt::Throw { value, .. } => {
-                self.check_expr(value);
+            Stmt::Throw { value, .. } => { self.check_expr(value); }
+            Stmt::LetDestructArray { elems, init, .. } => {
+                self.check_expr(init);
+                for elem in elems {
+                    match elem {
+                        DestructElem::Bind { name, default } => {
+                            self.define(name, Type::Unknown);
+                            if let Some(d) = default { self.check_expr(d); }
+                        }
+                        DestructElem::Rest(name) => { self.define(name, Type::Unknown); }
+                        DestructElem::Skip => {}
+                    }
+                }
             }
+            Stmt::LetDestructObject { fields, init, .. } => {
+                self.check_expr(init);
+                for f in fields {
+                    let name = f.alias.as_ref().unwrap_or(&f.key);
+                    self.define(name, Type::Unknown);
+                    if let Some(d) = &f.default { self.check_expr(d); }
+                }
+            }
+            Stmt::ForOf { var, iter, body, .. } => {
+                self.check_expr(iter);
+                self.push_scope();
+                self.define(var, Type::Unknown);
+                let was = self.in_loop; self.in_loop = true;
+                self.check_stmt(body);
+                self.in_loop = was;
+                self.pop_scope();
+            }
+            Stmt::Labeled { body, .. } => { self.check_stmt(body); }
+            Stmt::Enum { name, variants, .. } => {
+                self.define(name, Type::Unknown);
+                for (_, v) in variants { if let Some(e) = v { self.check_expr(e); } }
+            }
+            Stmt::TypeAlias { name, .. } => { self.define(name, Type::Unknown); }
+            Stmt::Interface { name, .. } => { self.define(name, Type::Unknown); }
+            Stmt::Decorator { target, .. } => { self.check_stmt(target); }
         }
     }
 
@@ -505,6 +512,9 @@ impl SemanticAnalyzer {
             }
             Expr::Spread { expr, .. } => { self.check_expr(expr); Type::Unknown }
             Expr::Super { .. } => Type::Unknown,
+            Expr::Yield { value, .. } => { if let Some(e) = value { self.check_expr(e); } Type::Unknown }
+            Expr::Await { expr, .. } => { self.check_expr(expr); Type::Unknown }
+            Expr::Pipe { left, right, .. } => { self.check_expr(left); self.check_expr(right); Type::Unknown }
         }
     }
 

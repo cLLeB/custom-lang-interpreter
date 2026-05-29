@@ -33,6 +33,15 @@ rustyline = "13.0"
 # Utilities
 colored = "2.0"
 
+# HTTP client (blocking)
+ureq = "2.9"
+
+# Regex
+regex = "1.10"
+
+# Date/time
+chrono = "0.4"
+
 [dev-dependencies]
 # Testing utilities
 assert_matches = "1.5"
