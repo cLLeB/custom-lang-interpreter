@@ -128,13 +128,12 @@ fn main() -> Result<(), CustomLangError> {
         _ => {
             let verbose = matches.get_flag("verbose");
             let no_semantic = matches.get_flag("no-semantic");
-            if matches.get_flag("repl") {
+            if matches.get_flag("repl") || matches.get_one::<String>("file").is_none() {
+                // Default to REPL when launched with no arguments (e.g. double-clicked)
                 let mut repl = Repl::new();
                 repl.run()?;
             } else if let Some(filename) = matches.get_one::<String>("file") {
                 execute_file(filename, verbose, no_semantic)?;
-            } else {
-                print_welcome();
             }
         }
     }
@@ -491,21 +490,4 @@ fn cmd_debug(file: &str) -> Result<(), CustomLangError> {
     interp.interpret(&program)?;
     println!("Execution complete.");
     Ok(())
-}
-
-fn print_welcome() {
-    println!("Custom Language Interpreter v0.3.0");
-    println!();
-    println!("Usage:");
-    println!("  custom-lang <file.cl>              Execute a source file");
-    println!("  custom-lang --repl                 Start interactive REPL");
-    println!("  custom-lang fmt <file.cl>          Format source file");
-    println!("  custom-lang lint <file.cl>         Lint source file");
-    println!("  custom-lang test [file.cl]         Run tests");
-    println!("  custom-lang docs <src> -o <dir>    Generate documentation");
-    println!("  custom-lang profile <file.cl>      Profile execution");
-    println!("  custom-lang compile <file.cl>      Compile to bytecode/js/wasm");
-    println!("  custom-lang debug <file.cl>        Debug a file");
-    println!();
-    println!("Features: 100+ language features, full standard library");
 }

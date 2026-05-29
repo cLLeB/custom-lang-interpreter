@@ -20,15 +20,13 @@ impl Repl {
     }
 
     pub fn run(&mut self) -> Result<()> {
-        println!("{}", "Custom Language REPL v0.3.0".bright_cyan().bold());
-        println!(
-            "{}",
-            "Type 'exit' or 'quit' to exit, 'help' for commands.".dimmed()
-        );
-        println!();
+        self.print_banner();
 
         loop {
-            match self.editor.readline(">> ") {
+            match self
+                .editor
+                .readline(&format!("{} ", ">>>".bright_cyan().bold()))
+            {
                 Ok(line) => {
                     let line = line.trim().to_string();
                     if line.is_empty() {
@@ -38,7 +36,14 @@ impl Repl {
 
                     match line.as_str() {
                         "exit" | "quit" => {
-                            println!("{}", "Goodbye!".bright_green());
+                            println!();
+                            println!(
+                                "  \u{1F44B}  {}",
+                                "Thanks for using custom-lang! Goodbye."
+                                    .bright_green()
+                                    .bold()
+                            );
+                            println!();
                             break;
                         }
                         "help" => {
@@ -47,6 +52,11 @@ impl Repl {
                         }
                         "clear" => {
                             print!("\x1B[2J\x1B[1;1H");
+                            self.print_banner();
+                            continue;
+                        }
+                        "version" => {
+                            println!("  custom-lang v0.3.0");
                             continue;
                         }
                         _ => {}
@@ -57,10 +67,15 @@ impl Repl {
                     }
                 }
                 Err(ReadlineError::Interrupted) => {
-                    println!("{}", "Use 'exit' or 'quit' to exit.".yellow());
+                    println!(
+                        "  {}",
+                        "(Ctrl+C pressed — type 'exit' or 'quit' to leave)".yellow()
+                    );
                 }
                 Err(ReadlineError::Eof) => {
-                    println!("{}", "Goodbye!".bright_green());
+                    println!();
+                    println!("  {}", "Goodbye!".bright_green().bold());
+                    println!();
                     break;
                 }
                 Err(err) => {
@@ -76,34 +91,145 @@ impl Repl {
         let tokens = Lexer::new(source).tokenize()?;
         let program = Parser::new(tokens).parse()?;
         if let Some(val) = self.interpreter.exec_repl(&program)? {
-            println!("{}", format!("=> {val}").bright_white());
+            println!("{} {}", "=>".bright_cyan(), val.to_string().bright_white());
         }
         Ok(())
     }
 
+    fn print_banner(&self) {
+        println!();
+        println!(
+            "  {}",
+            "╔══════════════════════════════════════════════════╗"
+                .bright_cyan()
+                .bold()
+        );
+        println!(
+            "  {}  {}  {}",
+            "║".bright_cyan().bold(),
+            "       custom-lang  ·  Interactive REPL  v0.3.0       "
+                .bright_white()
+                .bold(),
+            "║".bright_cyan().bold()
+        );
+        println!(
+            "  {}",
+            "╚══════════════════════════════════════════════════╝"
+                .bright_cyan()
+                .bold()
+        );
+        println!();
+        println!(
+            "  {}  {}",
+            "✦".bright_yellow(),
+            "A modern scripting language — type code and hit Enter".dimmed()
+        );
+        println!(
+            "  {}  {}  {}  {}  {}",
+            "✦".bright_yellow(),
+            "help".bright_cyan(),
+            "→ show commands".dimmed(),
+            "  exit".bright_cyan(),
+            "→ quit".dimmed()
+        );
+        println!();
+        println!("  {} {}", "Try:".dimmed(), "let x = 42".bright_white());
+        println!(
+            "  {}  {}",
+            "    ".dimmed(),
+            "print(\"Hello, World!\")".bright_white()
+        );
+        println!(
+            "  {}  {}",
+            "    ".dimmed(),
+            "function fib(n) { if (n <= 1) { return n } return fib(n-1) + fib(n-2) }"
+                .bright_white()
+        );
+        println!();
+    }
+
     fn print_help(&self) {
-        println!("{}", "Custom Language Help".bright_cyan().bold());
         println!();
-        println!("{}", "Syntax:".bright_yellow());
-        println!("  let x = 42;                    -- variable");
-        println!("  x += 1;                        -- compound assign");
-        println!("  if (x > 0) {{ ... }} else {{ ... }} -- conditional");
-        println!("  while (x > 0) {{ ... }}          -- while loop");
-        println!("  for (let i=0; i<n; i+=1) {{ }}  -- for loop");
-        println!("  for (item in arr) {{ }}          -- for-in loop");
-        println!("  function f(a, b) {{ return a+b; }} -- function");
-        println!("  let f = function(x) {{ x*2 }};  -- lambda");
-        println!("  class Dog extends Animal {{ ... }} -- class");
-        println!("  match x {{ 1 => ..., _ => ... }} -- pattern match");
+        println!(
+            "  {}",
+            "━━━━━━━━━━━━━━━━  custom-lang help  ━━━━━━━━━━━━━━━━"
+                .bright_cyan()
+                .bold()
+        );
         println!();
-        println!("{}", "Built-ins:".bright_yellow());
-        println!("  print, len, range, type, push, pop, filter, map, reduce");
-        println!("  floor, ceil, round, sqrt, pow, min, max, abs, log");
-        println!("  split, join, to_upper, to_lower, trim, contains");
-        println!("  read_file, write_file, append_file, input, now, assert");
+
+        let section = |title: &str| {
+            println!("  {}", title.bright_yellow().bold());
+        };
+        let row = |code: &str, desc: &str| {
+            println!("    {:<42}  {}", code.bright_white(), desc.dimmed());
+        };
+
+        section("Variables & Types");
+        row("let x = 42", "number");
+        row("let s = \"hello\"", "string");
+        row("let b = true", "boolean  (true / false)");
+        row("let a = [1, 2, 3]", "array");
+        row("let o = { name: \"Ada\", age: 30 }", "object");
         println!();
-        println!("{}", "REPL commands:".bright_yellow());
-        println!("  help   clear   exit   quit");
+
+        section("Control Flow");
+        row("if (x > 0) { } else { }", "if / else");
+        row("while (x > 0) { x -= 1 }", "while loop");
+        row("for (let i = 0; i < n; i += 1) { }", "for loop");
+        row("for (item in arr) { }", "for-in (arrays & objects)");
+        println!();
+
+        section("Functions");
+        row("function add(a, b) { return a + b }", "named function");
+        row("let f = function(x) { x * 2 }", "anonymous / lambda");
+        row("function* gen() { yield 1; yield 2 }", "generator");
+        println!();
+
+        section("Classes");
+        row("class Animal { function speak() { } }", "class definition");
+        row("class Dog extends Animal { }", "inheritance");
+        row("let d = new Dog()", "instantiation");
+        println!();
+
+        section("Error Handling");
+        row("try { } catch (e) { } finally { }", "try / catch / finally");
+        row("throw \"oops\"", "throw");
+        println!();
+
+        section("Pattern Matching");
+        row(
+            "match x { 1 => \"one\", _ => \"other\" }",
+            "match expression",
+        );
+        println!();
+
+        section("Useful Builtins");
+        row("print(x)  len(x)  range(n)  get_type(x)", "general purpose");
+        row(
+            "push(arr, v)  pop(arr)  map(arr, f)  filter(arr, f)",
+            "arrays",
+        );
+        row("split(s, d)  join(arr, d)  trim(s)  to_upper(s)", "strings");
+        row("sqrt(x)  floor(x)  ceil(x)  abs(x)  pow(x, n)", "math");
+        row(
+            "now()  input(prompt)  read_file(p)  write_file(p, s)",
+            "I/O",
+        );
+        println!();
+
+        section("REPL Commands");
+        row("help", "show this screen");
+        row("clear", "clear the terminal");
+        row("version", "show version");
+        row("exit  /  quit", "leave the REPL");
+        println!();
+        println!(
+            "  {}",
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                .bright_cyan()
+                .bold()
+        );
         println!();
     }
 }
