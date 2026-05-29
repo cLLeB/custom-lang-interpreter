@@ -267,7 +267,14 @@ fn test_undefined_variable() {
 
 #[test]
 fn test_stack_overflow_protection() {
-    let err = eval_err("function inf() { return inf(); } inf()");
+    // Spawn with a large stack so the language-level depth check fires
+    // before a real OS stack overflow (Windows debug stacks are small).
+    let err = std::thread::Builder::new()
+        .stack_size(32 * 1024 * 1024)
+        .spawn(|| eval_err("function inf() { return inf(); } inf()"))
+        .unwrap()
+        .join()
+        .unwrap();
     assert!(err.contains("overflow") || err.contains("depth"));
 }
 
