@@ -129,10 +129,10 @@ print "Boolean results: " + logic1 + ", " + logic2 + ", " + logic3 + ", " + logi
 // Test 10: Type checking
 print "Test 10: Type Operations";
 
-let type1 = type(42);
-let type2 = type("string");
-let type3 = type(true);
-let type4 = type(null);
+let type1 = get_type(42);
+let type2 = get_type("string");
+let type3 = get_type(true);
+let type4 = get_type(null);
 
 print "Types: " + type1 + ", " + type2 + ", " + type3 + ", " + type4;
 

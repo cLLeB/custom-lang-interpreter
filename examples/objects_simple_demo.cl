@@ -27,7 +27,7 @@ print "";
 print "3. Empty Objects:";
 let empty_obj = {};
 print "Empty object: " + empty_obj;
-print "Type: " + type(empty_obj);
+print "Type: " + get_type(empty_obj);
 print "Missing property: " + empty_obj["missing"];
 print "";
 
@@ -103,8 +103,8 @@ let obj2 = {x: 10, y: 20};
 
 print "Object 1: " + obj1;
 print "Object 2: " + obj2;
-print "obj1 type: " + type(obj1);
-print "obj2 type: " + type(obj2);
+print "obj1 type: " + get_type(obj1);
+print "obj2 type: " + get_type(obj2);
 
 // Test property access
 print "obj1[a]: " + obj1["a"];

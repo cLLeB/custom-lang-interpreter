@@ -47,10 +47,10 @@ let str = "text";
 let bool = true;
 let nothing = null;
 
-print "type(" + num + ") = " + type(num);
-print "type(" + str + ") = " + type(str);
-print "type(" + bool + ") = " + type(bool);
-print "type(" + nothing + ") = " + type(nothing);
+print "get_type(" + num + ") = " + type(num);
+print "get_type(" + str + ") = " + type(str);
+print "get_type(" + bool + ") = " + type(bool);
+print "get_type(" + nothing + ") = " + type(nothing);
 
 // 4. Practical Examples
 print "";

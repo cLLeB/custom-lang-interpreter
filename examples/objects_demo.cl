@@ -39,7 +39,7 @@ print "";
 print "4. Empty Objects:";
 let empty_obj = {};
 print "Empty object: " + empty_obj;
-print "Type: " + type(empty_obj);
+print "Type: " + get_type(empty_obj);
 print "Accessing non-existent property: " + empty_obj["missing"];
 print "";
 

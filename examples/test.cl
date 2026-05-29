@@ -17,9 +17,9 @@ let message = "Hello";
 print len(message);
 
 // Type function
-print type(42);
-print type("hello");
-print type(true);
+print(get_type(42));
+print(get_type("hello"));
+print(get_type(true));
 
 print "Testing user-defined functions:";
 

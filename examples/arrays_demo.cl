@@ -95,9 +95,9 @@ print "";
 
 // Array comparison and type checking
 print "8. Array Type Checking:";
-print "type([1, 2, 3]) = " + type([1, 2, 3]);
-print "type([]) = " + type([]);
-print "type(numbers) = " + type(numbers);
+print "get_type([1, 2, 3]) = " + get_type([1, 2, 3]);
+print "get_type([]) = " + get_type([]);
+print "get_type(numbers) = " + get_type(numbers);
 print "";
 
 // Complex array operations
