@@ -356,6 +356,8 @@ impl Parser {
                 methods.push(self.decorator_stmt()?);
                 continue;
             }
+            // Handle 'private' keyword (parsed as ident)
+            let _is_private = if let TokenKind::Ident(id) = &self.peek().kind { if id == "private" { self.advance(); true } else { false } } else { false };
             let is_static = self.match_tok(&TokenKind::Static);
             let is_async = self.match_tok(&TokenKind::Async);
             // getter: get name() { }
@@ -396,6 +398,14 @@ impl Parser {
             }
             if self.check(&TokenKind::Function) {
                 methods.push(self.function_stmt_inner(is_static, is_async)?);
+            } else if !is_static && self.peek_is_ident() {
+                // Instance field: fieldname = value; (private or public)
+                let fpos = self.peek().pos.clone();
+                let fname = self.expect_ident("expected field name")?;
+                let init = if self.match_tok(&TokenKind::Eq) { self.expression()? } else { Expr::Literal { value: Value::Null, pos: fpos.clone() } };
+                self.consume_terminator()?;
+                let body = Box::new(Stmt::Return { value: Some(init), pos: fpos.clone() });
+                methods.push(Stmt::Function { name: format!("__field_{fname}__"), params: vec![], body, is_static: false, is_generator: false, is_async: false, pos: fpos });
             } else {
                 return Err(self.parse_err("expected method in class body"));
             }
@@ -964,16 +974,45 @@ impl Parser {
 
     fn parse_args(&mut self) -> Result<Vec<Expr>> {
         let mut args = Vec::new();
+        let mut named_pairs: Vec<(ObjectKey, Expr)> = Vec::new();
+        let mut in_named = false;
         self.skip_newlines();
         while !self.check(&TokenKind::RParen) && !self.at_end() {
             self.skip_newlines();
-            if self.check(&TokenKind::DotDotDot) { let sp = self.peek().pos.clone(); self.advance(); let e = self.assignment()?; args.push(Expr::Spread { expr: Box::new(e), pos: sp }); }
-            else { args.push(self.assignment()?); }
+            // Detect named arg: bare Ident followed by ':'
+            let is_named = if let TokenKind::Ident(_) = &self.peek().kind {
+                std::mem::discriminant(&self.peek2().kind) == std::mem::discriminant(&TokenKind::Colon)
+            } else { false };
+            if is_named {
+                in_named = true;
+                let name = if let TokenKind::Ident(n) = self.advance().kind.clone() { n } else { unreachable!() };
+                self.advance(); // consume ':'
+                let val = self.assignment()?;
+                let pos = val.pos().clone();
+                named_pairs.push((ObjectKey::Static(name), val));
+                let _ = pos;
+            } else if in_named {
+                return Err(self.parse_err("positional argument after named argument"));
+            } else if self.check(&TokenKind::DotDotDot) {
+                let sp = self.peek().pos.clone(); self.advance();
+                let e = self.assignment()?;
+                args.push(Expr::Spread { expr: Box::new(e), pos: sp });
+            } else {
+                args.push(self.assignment()?);
+            }
             self.skip_newlines();
             if !self.match_tok(&TokenKind::Comma) { break; }
         }
         self.skip_newlines();
         self.expect(&TokenKind::RParen, "expected ')'")?;
+        // If there were named args, encode as a special sentinel object at end
+        if !named_pairs.is_empty() {
+            let pos = self.prev_pos();
+            let sentinel = (ObjectKey::Static("__named__".to_string()), Expr::Literal { value: Value::Bool(true), pos: pos.clone() });
+            let mut pairs = vec![sentinel];
+            pairs.extend(named_pairs);
+            args.push(Expr::Object { pairs, pos });
+        }
         Ok(args)
     }
 
@@ -993,15 +1032,26 @@ impl Parser {
     // Allow keywords as property names after '.'
     fn expect_ident_or_keyword(&mut self) -> Result<String> {
         let kind = self.peek().kind.clone();
-        match kind {
-            TokenKind::Ident(name) => { self.advance(); Ok(name) }
-            TokenKind::Get => { self.advance(); Ok("get".to_string()) }
-            TokenKind::Set => { self.advance(); Ok("set".to_string()) }
-            TokenKind::Static => { self.advance(); Ok("static".to_string()) }
-            TokenKind::From => { self.advance(); Ok("from".to_string()) }
-            TokenKind::Type => { self.advance(); Ok("type".to_string()) }
-            _ => Err(self.parse_err("expected property name")),
-        }
+        let name = match kind {
+            TokenKind::Ident(name) => { self.advance(); return Ok(name); }
+            TokenKind::Let => "let", TokenKind::If => "if", TokenKind::Else => "else",
+            TokenKind::While => "while", TokenKind::For => "for", TokenKind::In => "in",
+            TokenKind::Of => "of", TokenKind::Break => "break", TokenKind::Continue => "continue",
+            TokenKind::Function => "function", TokenKind::Return => "return",
+            TokenKind::True => "true", TokenKind::False => "false", TokenKind::Null => "null",
+            TokenKind::Print => "print", TokenKind::Import => "import", TokenKind::Export => "export",
+            TokenKind::Class => "class", TokenKind::Extends => "extends", TokenKind::This => "this",
+            TokenKind::New => "new", TokenKind::Match => "match",
+            TokenKind::Do => "do", TokenKind::Throw => "throw", TokenKind::Try => "try",
+            TokenKind::Catch => "catch", TokenKind::Finally => "finally", TokenKind::Super => "super",
+            TokenKind::Static => "static", TokenKind::Instanceof => "instanceof",
+            TokenKind::Yield => "yield", TokenKind::Async => "async", TokenKind::Await => "await",
+            TokenKind::Type => "type", TokenKind::Enum => "enum", TokenKind::Interface => "interface",
+            TokenKind::From => "from", TokenKind::Get => "get", TokenKind::Set => "set",
+            _ => return Err(self.parse_err("expected property name")),
+        };
+        self.advance();
+        Ok(name.to_string())
     }
     fn skip_newlines(&mut self) { while self.check(&TokenKind::Newline) { self.advance(); } }
     fn consume_terminator(&mut self) -> Result<()> {

@@ -1,4 +1,4 @@
-use std::cell::RefCell;
+﻿use std::cell::RefCell;
 use std::collections::HashMap;
 use std::io::{self, Write};
 use std::rc::Rc;
@@ -24,13 +24,63 @@ pub struct Interpreter {
     pub env: EnvRef,
     call_depth: usize,
     pub thrown_value: Option<Value>,
+    // Module system
+    module_cache: HashMap<String, HashMap<String, Value>>,
+    loading_modules: std::collections::HashSet<String>,
+    // Test mode
+    test_mode: bool,
+    test_passed: usize,
+    test_failed: usize,
+    // Profile mode
+    profile_mode: bool,
+    profile_data: HashMap<String, f64>,
 }
 
 impl Interpreter {
     pub fn new() -> Self {
         let env = Env::root();
         Self::register_builtins(&env);
-        Self { env, call_depth: 0, thrown_value: None }
+        Self {
+            env, call_depth: 0, thrown_value: None,
+            module_cache: HashMap::new(),
+            loading_modules: std::collections::HashSet::new(),
+            test_mode: false, test_passed: 0, test_failed: 0,
+            profile_mode: false, profile_data: HashMap::new(),
+        }
+    }
+
+    pub fn set_test_mode(&mut self, v: bool) { self.test_mode = v; }
+    pub fn test_results(&self) -> (usize, usize) { (self.test_passed, self.test_failed) }
+    pub fn set_profile_mode(&mut self, v: bool) { self.profile_mode = v; }
+    pub fn profile_results(&self) -> Vec<(String, f64)> {
+        let mut v: Vec<(String, f64)> = self.profile_data.iter().map(|(k, v)| (k.clone(), *v)).collect();
+        v.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        v
+    }
+
+    /// Set a global variable directly (for embedding API)
+    pub fn set_global(&mut self, name: &str, value: Value) {
+        Env::define(&self.env, name, value);
+    }
+
+    /// Get a global variable (for embedding API)
+    pub fn get_global(&self, name: &str) -> Option<Value> {
+        Env::get(&self.env, name)
+    }
+
+    /// Evaluate a string of source code (for embedding API)
+    pub fn eval(&mut self, source: &str) -> crate::error::Result<Option<Value>> {
+        let tokens = crate::lexer::Lexer::new(source).tokenize()?;
+        let program = crate::parser::Parser::new(tokens).parse()?;
+        self.exec_repl(&program)
+    }
+
+    /// Call a named function with args (for embedding API)
+    pub fn call_fn_by_name(&mut self, name: &str, args: Vec<Value>) -> crate::error::Result<Value> {
+        let func = Env::get(&self.env, name)
+            .ok_or_else(|| CustomLangError::undef_var(name, None))?;
+        let pos = Position::default();
+        self.call_value(func, args, None, &pos)
     }
 
     pub fn interpret(&mut self, program: &Program) -> Result<()> {
@@ -56,7 +106,7 @@ impl Interpreter {
         Ok(last)
     }
 
-    // ─── statements ───────────────────────────────────────────────────────────
+    // â”€â”€â”€ statements â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     pub fn exec_stmt(&mut self, stmt: &Stmt) -> Result<Signal> {
         match stmt {
@@ -137,6 +187,14 @@ impl Interpreter {
                     Value::Array(arr) => arr.borrow().clone(),
                     Value::Str(s) => s.chars().map(|c| Value::Str(c.to_string())).collect(),
                     Value::Object(obj) => obj.borrow().keys().map(|k| Value::Str(k.clone())).collect(),
+                    Value::Generator(g) => {
+                        let mut v = Vec::new();
+                        loop {
+                            let item = { let mut gs = g.borrow_mut(); if gs.done || gs.index >= gs.values.len() { break; } let x = gs.values[gs.index].clone(); gs.index += 1; x };
+                            v.push(item);
+                        }
+                        v
+                    }
                     _ => return Err(CustomLangError::type_err(format!("cannot iterate over {}", iter_val.type_name()))),
                 };
                 let loop_env = Env::child(&self.env);
@@ -352,7 +410,7 @@ impl Interpreter {
         Ok(signal)
     }
 
-    // ─── expressions ──────────────────────────────────────────────────────────
+    // â”€â”€â”€ expressions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     pub fn eval_expr(&mut self, expr: &Expr) -> Result<Value> {
         match expr {
@@ -452,7 +510,7 @@ impl Interpreter {
                 let new_val = self.eval_expr(value)?;
                 match &obj_val {
                     Value::Class(cls) => {
-                        // Set static field — use Rc::ptr_eq workaround via unsafe
+                        // Set static field â€” use Rc::ptr_eq workaround via unsafe
                         // We can't mutate ClassData through Rc, so we update via env
                         if let Expr::Var { name: class_name, .. } = object.as_ref() {
                             if let Some(Value::Class(cls_ref)) = Env::get(&self.env, class_name) {
@@ -530,6 +588,22 @@ impl Interpreter {
             Expr::Call { callee, args, pos } => {
                 match callee.as_ref() {
                     Expr::Prop { object, name, .. } => {
+                        // Special case: super.method() — call parent instance method with current this
+                        if let Expr::Super { .. } = object.as_ref() {
+                            let super_cls = Env::get(&self.env, "__super_class__")
+                                .ok_or_else(|| CustomLangError::runtime("'super' used outside class method").with_pos(pos))?;
+                            let this_val = Env::get(&self.env, "this")
+                                .ok_or_else(|| CustomLangError::runtime("'super' used outside class method").with_pos(pos))?;
+                            if let Value::Class(cls) = super_cls {
+                                let method = cls.methods.get(name)
+                                    .or_else(|| cls.static_methods.get(name))
+                                    .cloned()
+                                    .ok_or_else(|| CustomLangError::runtime(format!("super class '{}' has no method '{name}'", cls.name)).with_pos(pos))?;
+                                let arg_vals = self.eval_args(args)?;
+                                return self.call_fn(&method, arg_vals, Some(this_val), pos);
+                            }
+                            return Err(CustomLangError::runtime("'super' is not a class").with_pos(pos));
+                        }
                         let receiver = self.eval_expr(object)?;
                         // Special case: generator.next() / generator.to_array()
                         if let Value::Generator(_) = &receiver {
@@ -544,7 +618,7 @@ impl Interpreter {
                         self.call_with_this(method, Some(receiver), arg_vals, pos)
                     }
                     Expr::Super { .. } => {
-                        // super(args) — call parent constructor
+                        // super(args) â€” call parent constructor
                         let super_cls = Env::get(&self.env, "__super_class__")
                             .ok_or_else(|| CustomLangError::runtime("'super()' used outside class method"))?;
                         let this_val = Env::get(&self.env, "this")
@@ -664,7 +738,7 @@ impl Interpreter {
                 .ok_or_else(|| CustomLangError::runtime("'this' used outside of a class method").with_pos(pos)),
 
             Expr::Super { pos } => {
-                // super as expression — evaluate to a proxy-like value
+                // super as expression â€” evaluate to a proxy-like value
                 // We'll represent it as the superclass Value::Class
                 Env::get(&self.env, "__super_class__")
                     .ok_or_else(|| CustomLangError::runtime("'super' used outside class method").with_pos(pos))
@@ -730,7 +804,7 @@ impl Interpreter {
         }
     }
 
-    // ─── operators ────────────────────────────────────────────────────────────
+    // â”€â”€â”€ operators â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     fn apply_binop(&self, l: &Value, op: &BinaryOp, r: &Value, pos: &Position) -> Result<Value> {
         match op {
@@ -852,7 +926,7 @@ impl Interpreter {
         CustomLangError::type_err(format!("cannot apply {op} to {} and {}", l.type_name(), r.type_name())).with_pos(pos)
     }
 
-    // ─── property / index access ──────────────────────────────────────────────
+    // â”€â”€â”€ property / index access â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     fn eval_index(&self, obj: &Value, idx: &Value, pos: &Position) -> Result<Value> {
         match (obj, idx) {
@@ -961,7 +1035,7 @@ impl Interpreter {
         }
     }
 
-    // ─── function calls ───────────────────────────────────────────────────────
+    // â”€â”€â”€ function calls â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     fn eval_args(&mut self, args: &[Expr]) -> Result<Vec<Value>> {
         let mut result = Vec::new();
@@ -984,23 +1058,87 @@ impl Interpreter {
         match func {
             Value::Function(fd) => self.call_fn(&fd, args, this, pos),
             Value::Builtin(name) => {
-                // For builtins that expect a receiver as first arg (collection methods, etc.)
-                // prepend `this` if provided
                 let final_args = if let Some(t) = this {
-                    let needs_this = name.starts_with("coll_") || name.starts_with("gen_");
-                    if needs_this {
-                        let mut new_args = vec![t];
-                        new_args.extend(args);
-                        new_args
-                    } else {
-                        args
-                    }
-                } else {
-                    args
-                };
+                    let needs_this = name.starts_with("coll_") || name.starts_with("gen_")
+                        || name.starts_with("map_") || name.starts_with("set_")
+                        || name.starts_with("pq_");
+                    if needs_this { let mut a = vec![t]; a.extend(args); a } else { args }
+                } else { args };
                 self.call_builtin(&name, final_args, pos)
             }
             Value::Class(cls) => self.instantiate(Value::Class(cls), args, pos),
+            // Callable special objects: compose, memoize, curry, partial
+            Value::Object(ref obj) => {
+                let flags = {
+                    let b = obj.borrow();
+                    let is_compose = matches!(b.get("__compose__"), Some(Value::Bool(true)));
+                    let is_memo = matches!(b.get("__memoized__"), Some(Value::Bool(true)));
+                    let is_curry = matches!(b.get("__curry__"), Some(Value::Bool(true)));
+                    let is_partial = matches!(b.get("__partial__"), Some(Value::Bool(true)));
+                    (is_compose, is_memo, is_curry, is_partial)
+                };
+                if flags.0 { // compose
+                    let fns = { let b = obj.borrow(); b.get("__fns__").cloned().unwrap_or(Value::make_array(vec![])) };
+                    if let Value::Array(arr) = fns {
+                        let fns_list = arr.borrow().clone();
+                        let mut result = args.into_iter().next().unwrap_or(Value::Null);
+                        for f in fns_list.iter().rev() {
+                            result = self.call_value(f.clone(), vec![result], None, pos)?;
+                        }
+                        return Ok(result);
+                    }
+                }
+                if flags.1 { // memoize
+                    let (fn_val, cache_key) = {
+                        let b = obj.borrow();
+                        let f = b.get("__fn__").cloned().unwrap_or(Value::Null);
+                        let key = args.iter().map(|v| v.repr()).collect::<Vec<_>>().join(",");
+                        (f, key)
+                    };
+                    // Check cache
+                    let cached = { let b = obj.borrow(); if let Some(Value::Object(c)) = b.get("__cache__") { c.borrow().get(&cache_key).cloned() } else { None } };
+                    if let Some(v) = cached { return Ok(v); }
+                    let result = self.call_value(fn_val, args, None, pos)?;
+                    { let b = obj.borrow(); if let Some(Value::Object(c)) = b.get("__cache__") { c.borrow_mut().insert(cache_key, result.clone()); } }
+                    return Ok(result);
+                }
+                if flags.2 { // curry
+                    let (fn_val, stored_args) = {
+                        let b = obj.borrow();
+                        let f = b.get("__fn__").cloned().unwrap_or(Value::Null);
+                        let stored = if let Some(Value::Array(a)) = b.get("__args__") { a.borrow().clone() } else { vec![] };
+                        (f, stored)
+                    };
+                    let arity = if let Value::Function(ref fd) = fn_val { fd.params.len() } else { args.len() };
+                    let mut combined = stored_args;
+                    combined.extend(args);
+                    if combined.len() >= arity {
+                        return self.call_value(fn_val, combined, None, pos);
+                    }
+                    let mut map = HashMap::new();
+                    map.insert("__curry__".to_string(), Value::Bool(true));
+                    map.insert("__fn__".to_string(), fn_val);
+                    map.insert("__args__".to_string(), Value::make_array(combined));
+                    return Ok(Value::make_object(map));
+                }
+                if flags.3 { // partial
+                    let (fn_val, bound) = {
+                        let b = obj.borrow();
+                        let f = b.get("__fn__").cloned().unwrap_or(Value::Null);
+                        let bound = if let Some(Value::Array(a)) = b.get("__args__") { a.borrow().clone() } else { vec![] };
+                        (f, bound)
+                    };
+                    let mut combined = bound;
+                    combined.extend(args);
+                    return self.call_value(fn_val, combined, None, pos);
+                }
+                // Regular object called as function â€” check for __call__ method
+                let call_method = { obj.borrow().get("__call__").cloned() };
+                if let Some(m) = call_method {
+                    return self.call_value(m, args, Some(Value::Object(Rc::clone(&obj))), pos);
+                }
+                Err(CustomLangError::type_err("cannot call object as function").with_pos(pos))
+            }
             _ => Err(CustomLangError::type_err(format!("cannot call value of type {}", func.type_name())).with_pos(pos)),
         }
     }
@@ -1026,20 +1164,41 @@ impl Interpreter {
         }
         Env::define(&fn_env, &fd.name, Value::Function(Rc::clone(fd)));
 
-        // Bind parameters with defaults and rest support
+        // Separate positional args from named args sentinel object
+        let named_obj = args.last().and_then(|last| {
+            if let Value::Object(o) = last {
+                let b = o.borrow();
+                if matches!(b.get("__named__"), Some(Value::Bool(true))) {
+                    Some(o.clone())
+                } else { None }
+            } else { None }
+        });
+        let positional_count = if named_obj.is_some() { args.len().saturating_sub(1) } else { args.len() };
+
+        // Bind parameters with defaults, rest, and named args support
         let mut arg_idx = 0;
         for (i, param) in fd.params.iter().enumerate() {
             if param.is_rest {
-                // Rest param: collect remaining args
-                let rest_vals: Vec<Value> = args[arg_idx..].to_vec();
+                let rest_vals: Vec<Value> = args[arg_idx..positional_count].to_vec();
                 Env::define(&fn_env, &param.name, Value::make_array(rest_vals));
                 break;
             } else {
-                let val = if arg_idx < args.len() {
+                let val = if arg_idx < positional_count {
                     arg_idx += 1;
                     args[arg_idx - 1].clone()
+                } else if let Some(ref named) = named_obj {
+                    // Try named arg lookup
+                    named.borrow().get(&param.name).cloned().unwrap_or_else(|| {
+                        if let Some(default_expr) = &param.default {
+                            let outer = std::mem::replace(&mut self.env, Rc::clone(&fn_env));
+                            let v = self.eval_expr(default_expr).unwrap_or(Value::Null);
+                            self.env = outer;
+                            v
+                        } else {
+                            if i < args.len() { args[i].clone() } else { Value::Null }
+                        }
+                    })
                 } else if let Some(default_expr) = &param.default {
-                    // Evaluate default in the function's environment
                     let outer = std::mem::replace(&mut self.env, Rc::clone(&fn_env));
                     let default_val = self.eval_expr(default_expr);
                     self.env = outer;
@@ -1124,7 +1283,7 @@ impl Interpreter {
         Ok(())
     }
 
-    // ─── class / instance ─────────────────────────────────────────────────────
+    // â”€â”€â”€ class / instance â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     fn exec_class(&mut self, name: &str, super_name: Option<&str>, methods: &[Stmt]) -> Result<()> {
         let superclass = if let Some(sn) = super_name {
@@ -1158,9 +1317,11 @@ impl Interpreter {
                         setters.insert(prop, fd);
                     } else if mn.starts_with("__static_field_") && mn.ends_with("__") {
                         let field_name = mn.trim_start_matches("__static_field_").trim_end_matches("__").to_string();
-                        // evaluate: call the fd with no args to get the value
                         let val = self.call_fn(&fd, vec![], None, &Position::default())?;
                         static_fields.insert(field_name, val);
+                    } else if mn.starts_with("__field_") && mn.ends_with("__") {
+                        // instance field default â€” stored for use at instantiation
+                        method_map.insert(mn.clone(), fd);
                     } else if *is_static {
                         static_method_map.insert(mn.clone(), fd);
                     } else {
@@ -1168,7 +1329,7 @@ impl Interpreter {
                     }
                 }
                 Stmt::Decorator { name: dname, target, .. } => {
-                    // Handle method decorators — apply decorator to the function
+                    // Handle method decorators â€” apply decorator to the function
                     if let Stmt::Function { name: mn, params, body, is_static, is_generator, is_async, .. } = target.as_ref() {
                         let fd = Rc::new(FnData {
                             name: mn.clone(), params: params.clone(), body: body.clone(),
@@ -1201,6 +1362,11 @@ impl Interpreter {
     }
 
     fn instantiate(&mut self, class_val: Value, args: Vec<Value>, pos: &Position) -> Result<Value> {
+        // Handle built-in collection types
+        if let Value::Builtin(ref name) = class_val {
+            return self.call_builtin(name, args, pos);
+        }
+
         let cls = match class_val {
             Value::Class(c) => c,
             _ => return Err(CustomLangError::type_err(format!("cannot instantiate {}", class_val.type_name())).with_pos(pos)),
@@ -1212,13 +1378,23 @@ impl Interpreter {
         }));
         let inst_val = Value::Instance(Rc::clone(&inst));
 
+        // Initialize instance fields from __field_*__ methods
+        let field_fns: Vec<(String, Rc<FnData>)> = cls.methods.iter()
+            .filter(|(n, _)| n.starts_with("__field_") && n.ends_with("__"))
+            .map(|(n, fd)| (n.trim_start_matches("__field_").trim_end_matches("__").to_string(), Rc::clone(fd)))
+            .collect();
+        for (field_name, fd) in field_fns {
+            let val = self.call_fn(&fd, vec![], Some(inst_val.clone()), pos)?;
+            inst.borrow_mut().fields.insert(field_name, val);
+        }
+
         if let Some(init_fd) = cls.methods.get("init") {
             self.call_fn(init_fd, args, Some(inst_val.clone()), pos)?;
         }
         Ok(inst_val)
     }
 
-    // ─── pattern matching ─────────────────────────────────────────────────────
+    // â”€â”€â”€ pattern matching â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     fn match_pattern(&self, pattern: &Pattern, value: &Value) -> Result<Option<Vec<(String, Value)>>> {
         Ok(match pattern {
@@ -1265,7 +1441,7 @@ impl Interpreter {
         })
     }
 
-    // ─── import ───────────────────────────────────────────────────────────────
+    // â”€â”€â”€ import â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     fn exec_import_with_names(&mut self, path: &str, alias: Option<&str>, names: &[(String, Option<String>)]) -> Result<()> {
         if !names.is_empty() {
@@ -1318,6 +1494,18 @@ impl Interpreter {
         }
 
         let file_path = if path.ends_with(".cl") { path.to_string() } else { format!("{path}.cl") };
+
+        // Module caching: return cached version if already loaded
+        if let Some(cached) = self.module_cache.get(&file_path).cloned() {
+            return self.apply_module_exports(cached, &file_path, alias);
+        }
+
+        // Circular import detection
+        if self.loading_modules.contains(&file_path) {
+            return Err(CustomLangError::runtime(format!("circular import detected: '{file_path}'")));
+        }
+        self.loading_modules.insert(file_path.clone());
+
         let source = std::fs::read_to_string(&file_path).map_err(|e| {
             CustomLangError::io_err(format!("cannot read module '{file_path}': {e}"))
         })?;
@@ -1329,28 +1517,42 @@ impl Interpreter {
 
         let mod_env = Env::root();
         Self::register_builtins(&mod_env);
-        let mut mod_interp = Interpreter { env: mod_env, call_depth: self.call_depth, thrown_value: None };
+        let mut mod_interp = Interpreter {
+            env: mod_env, call_depth: self.call_depth, thrown_value: None,
+            module_cache: self.module_cache.clone(),
+            loading_modules: self.loading_modules.clone(),
+            test_mode: false, test_passed: 0, test_failed: 0,
+            profile_mode: false, profile_data: HashMap::new(),
+        };
         mod_interp.interpret(&program)?;
+        // Update parent caches
+        self.module_cache.extend(mod_interp.module_cache);
 
         let mod_name = alias.unwrap_or_else(|| {
             std::path::Path::new(path).file_stem().and_then(|s| s.to_str()).unwrap_or(path)
         });
 
-        if alias.is_some() {
-            let mut ns = HashMap::new();
-            let names = Env::all_names(&mod_interp.env);
-            for name in names {
-                if let Some(v) = Env::get(&mod_interp.env, &name) {
-                    ns.insert(name, v);
-                }
+        // Build module namespace for caching
+        let mut ns = HashMap::new();
+        let all_names = Env::all_names(&mod_interp.env);
+        for name in &all_names {
+            if let Some(v) = Env::get(&mod_interp.env, name) {
+                ns.insert(name.clone(), v);
             }
+        }
+        // Cache module
+        self.module_cache.insert(file_path.clone(), ns.clone());
+        self.loading_modules.remove(&file_path);
+
+        self.apply_module_exports(ns, mod_name, alias)
+    }
+
+    fn apply_module_exports(&mut self, ns: HashMap<String, Value>, mod_name: &str, alias: Option<&str>) -> Result<()> {
+        if alias.is_some() {
             Env::define(&self.env, mod_name, Value::make_object(ns));
         } else {
-            let names = Env::all_names(&mod_interp.env);
-            for name in names {
-                if let Some(v) = Env::get(&mod_interp.env, &name) {
-                    Env::define(&self.env, &name, v);
-                }
+            for (name, v) in ns {
+                Env::define(&self.env, &name, v);
             }
         }
         Ok(())
@@ -1373,11 +1575,11 @@ impl Interpreter {
 
     fn make_random_module() -> HashMap<String, Value> {
         let mut m = HashMap::new();
-        m.insert("float".to_string(), Value::Builtin("random_float".to_string()));
-        m.insert("int".to_string(), Value::Builtin("random_int".to_string()));
-        m.insert("bool".to_string(), Value::Builtin("random_bool".to_string()));
-        m.insert("choice".to_string(), Value::Builtin("random_choice".to_string()));
-        m.insert("shuffle".to_string(), Value::Builtin("random_shuffle".to_string()));
+        for (k, v) in [("float","random_float"),("int","random_int"),("bool","random_bool"),
+                       ("choice","random_choice"),("shuffle","random_shuffle"),
+                       ("sample","random_sample"),("seed","random_seed"),("uuid","random_uuid")] {
+            m.insert(k.to_string(), Value::Builtin(v.to_string()));
+        }
         m
     }
 
@@ -1574,7 +1776,7 @@ impl Interpreter {
         m
     }
 
-    // ─── builtins ─────────────────────────────────────────────────────────────
+    // â”€â”€â”€ builtins â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     fn register_builtins(env: &EnvRef) {
         let builtins = [
@@ -1648,6 +1850,16 @@ impl Interpreter {
             "memoize","partial","curry","compose",
             // format
             "fmt",
+            // built-in collection constructors
+            "Map","Set","Queue","Stack","Deque","LinkedList","PriorityQueue",
+            // random extras
+            "random_sample","random_seed","random_uuid",
+            // csv/format extras
+            "csv_parse","csv_stringify","toml_parse","yaml_parse","ini_parse",
+            // format_advanced / named_call
+            "format_advanced","named_call","typeof","trampoline","define_macro",
+            // fs recursive / process spawn
+            "fs_list_dir_recursive","proc_spawn",
         ];
         for name in builtins {
             Env::define(env, name, Value::Builtin(name.to_string()));
@@ -2128,7 +2340,7 @@ impl Interpreter {
                     _ => Err(CustomLangError::type_err("average() requires array")),
                 }
             }
-            // ── JSON ──────────────────────────────────────────────────────────
+            // â”€â”€ JSON â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             "json_parse" => {
                 if argc != 1 { return err_argc("1"); }
                 match &args[0] {
@@ -2145,7 +2357,7 @@ impl Interpreter {
                 if argc != 1 { return err_argc("1"); }
                 match &args[0] { Value::Str(s) => Ok(Value::Bool(parse_json(s).is_ok())), _ => Ok(Value::Bool(false)) }
             }
-            // ── Random ────────────────────────────────────────────────────────
+            // â”€â”€ Random â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             "random_float" => {
                 use std::time::{SystemTime, UNIX_EPOCH};
                 let seed = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(12345);
@@ -2206,7 +2418,7 @@ impl Interpreter {
                     _ => Err(CustomLangError::type_err("random_shuffle() requires array")),
                 }
             }
-            // ── Math extended ─────────────────────────────────────────────────
+            // â”€â”€ Math extended â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             "math_clamp" => {
                 if argc != 3 { return err_argc("3"); }
                 match (&args[0], &args[1], &args[2]) {
@@ -2260,7 +2472,7 @@ impl Interpreter {
             "math_is_nan" => { if argc != 1 { return err_argc("1"); } match &args[0] { Value::Number(n) => Ok(Value::Bool(n.is_nan())), _ => Ok(Value::Bool(false)) } }
             "math_is_finite" => { if argc != 1 { return err_argc("1"); } match &args[0] { Value::Number(n) => Ok(Value::Bool(n.is_finite())), _ => Ok(Value::Bool(false)) } }
 
-            // ── Math extended ─────────────────────────────────────────────
+            // â”€â”€ Math extended â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             "math_lerp" => { if argc != 3 { return err_argc("3"); } match (&args[0],&args[1],&args[2]) { (Value::Number(a),Value::Number(b),Value::Number(t)) => Ok(Value::Number(a + (b-a)*t)), _ => Err(CustomLangError::type_err("lerp() requires 3 numbers")) } }
             "math_degrees" => { if argc != 1 { return err_argc("1"); } match args[0] { Value::Number(r) => Ok(Value::Number(r.to_degrees())), _ => Err(CustomLangError::type_err("degrees() requires number")) } }
             "math_radians" => { if argc != 1 { return err_argc("1"); } match args[0] { Value::Number(d) => Ok(Value::Number(d.to_radians())), _ => Err(CustomLangError::type_err("radians() requires number")) } }
@@ -2274,7 +2486,7 @@ impl Interpreter {
             "math_cbrt" => { if argc != 1 { return err_argc("1"); } match args[0] { Value::Number(n) => Ok(Value::Number(n.cbrt())), _ => Err(CustomLangError::type_err("cbrt() requires number")) } }
             "math_trunc" => { if argc != 1 { return err_argc("1"); } match args[0] { Value::Number(n) => Ok(Value::Number(n.trunc())), _ => Err(CustomLangError::type_err("trunc() requires number")) } }
 
-            // ── String extras ─────────────────────────────────────────────
+            // â”€â”€ String extras â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             "str_at" => { if argc != 2 { return err_argc("2"); } match (&args[0],&args[1]) { (Value::Str(s),Value::Number(n)) => { let chars: Vec<char> = s.chars().collect(); let len = chars.len(); let i = if *n < 0.0 { (len as f64 + n) as usize } else { *n as usize }; Ok(chars.get(i).map(|c| Value::Str(c.to_string())).unwrap_or(Value::Null)) } _ => Err(CustomLangError::type_err("at() requires (string, number)")) } }
             "str_last_index_of" => { if argc != 2 { return err_argc("2"); } match (&args[0],&args[1]) { (Value::Str(s),Value::Str(sub)) => Ok(Value::Number(s.rfind(sub.as_str()).map(|i| i as f64).unwrap_or(-1.0))), _ => Err(CustomLangError::type_err("last_index_of() requires (string, string)")) } }
             "str_char_codes" => { if argc != 1 { return err_argc("1"); } match &args[0] { Value::Str(s) => Ok(Value::make_array(s.chars().map(|c| Value::Number(c as u32 as f64)).collect())), _ => Err(CustomLangError::type_err("char_codes() requires string")) } }
@@ -2290,7 +2502,7 @@ impl Interpreter {
             "str_word_count" => { if argc != 1 { return err_argc("1"); } match &args[0] { Value::Str(s) => Ok(Value::Number(s.split_whitespace().count() as f64)), _ => Err(CustomLangError::type_err("word_count() requires string")) } }
             "str_lines" => { if argc != 1 { return err_argc("1"); } match &args[0] { Value::Str(s) => Ok(Value::make_array(s.lines().map(|l| Value::Str(l.to_string())).collect())), _ => Err(CustomLangError::type_err("lines() requires string")) } }
 
-            // ── Array extras ──────────────────────────────────────────────
+            // â”€â”€ Array extras â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             "arr_unzip" => { if argc != 1 { return err_argc("1"); } match &args[0] { Value::Array(arr) => { let items = arr.borrow().clone(); let mut a: Vec<Value> = Vec::new(); let mut b: Vec<Value> = Vec::new(); for item in &items { if let Value::Array(pair) = item { let p = pair.borrow(); a.push(p.get(0).cloned().unwrap_or(Value::Null)); b.push(p.get(1).cloned().unwrap_or(Value::Null)); } } Ok(Value::make_array(vec![Value::make_array(a), Value::make_array(b)])) } _ => Err(CustomLangError::type_err("unzip() requires array")) } }
             "arr_group_by" => { if argc != 2 { return err_argc("2"); } match &args[0] { Value::Array(arr) => { let cb = args[1].clone(); let items = arr.borrow().clone(); let mut groups: HashMap<String,Vec<Value>> = HashMap::new(); for item in items { let k = self.call_value(cb.clone(), vec![item.clone()], None, pos)?; groups.entry(k.to_string()).or_default().push(item); } let mut map = HashMap::new(); for (k,v) in groups { map.insert(k, Value::make_array(v)); } Ok(Value::make_object(map)) } _ => Err(CustomLangError::type_err("group_by() requires array")) } }
             "arr_partition" => { if argc != 2 { return err_argc("2"); } match &args[0] { Value::Array(arr) => { let cb = args[1].clone(); let items = arr.borrow().clone(); let mut yes = Vec::new(); let mut no = Vec::new(); for item in items { if self.call_value(cb.clone(), vec![item.clone()], None, pos)?.is_truthy() { yes.push(item); } else { no.push(item); } } Ok(Value::make_array(vec![Value::make_array(yes), Value::make_array(no)])) } _ => Err(CustomLangError::type_err("partition() requires array")) } }
@@ -2309,7 +2521,7 @@ impl Interpreter {
             "arr_intersection" => { if argc != 2 { return err_argc("2"); } match (&args[0],&args[1]) { (Value::Array(a),Value::Array(b)) => { let bi = b.borrow().clone(); let result: Vec<Value> = a.borrow().iter().filter(|v| bi.iter().any(|bv| v.equals(bv))).cloned().collect(); Ok(Value::make_array(result)) } _ => Err(CustomLangError::type_err("intersection() requires 2 arrays")) } }
             "arr_union" => { if argc != 2 { return err_argc("2"); } match (&args[0],&args[1]) { (Value::Array(a),Value::Array(b)) => { let mut result = a.borrow().clone(); for item in b.borrow().iter() { if !result.iter().any(|v| v.equals(item)) { result.push(item.clone()); } } Ok(Value::make_array(result)) } _ => Err(CustomLangError::type_err("union() requires 2 arrays")) } }
 
-            // ── Object extras ─────────────────────────────────────────────
+            // â”€â”€ Object extras â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             "obj_merge" => {
                 let mut map = HashMap::new();
                 for arg in &args {
@@ -2328,7 +2540,7 @@ impl Interpreter {
             "obj_invert" => { if argc != 1 { return err_argc("1"); } match &args[0] { Value::Object(obj) => { let map: HashMap<String,Value> = obj.borrow().iter().map(|(k,v)| (v.to_string(), Value::Str(k.clone()))).collect(); Ok(Value::make_object(map)) } _ => Err(CustomLangError::type_err("invert() requires object")) } }
             "obj_from_entries" => { if argc != 1 { return err_argc("1"); } match &args[0] { Value::Array(arr) => { let mut map = HashMap::new(); for item in arr.borrow().iter() { if let Value::Array(pair) = item { let p = pair.borrow(); if let (Some(Value::Str(k)), Some(v)) = (p.get(0), p.get(1)) { map.insert(k.clone(), v.clone()); } } } Ok(Value::make_object(map)) } _ => Err(CustomLangError::type_err("from_entries() requires array")) } }
 
-            // ── FS ────────────────────────────────────────────────────────
+            // â”€â”€ FS â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             "fs_read_text" => { if argc != 1 { return err_argc("1"); } match &args[0] { Value::Str(p) => std::fs::read_to_string(p).map(Value::Str).map_err(|e| CustomLangError::io_err(format!("read: {e}"))), _ => Err(CustomLangError::type_err("read_text() requires string")) } }
             "fs_write_text" => { if argc != 2 { return err_argc("2"); } match (&args[0],&args[1]) { (Value::Str(p),c) => { std::fs::write(p, c.to_string()).map_err(|e| CustomLangError::io_err(format!("write: {e}")))?; Ok(Value::Bool(true)) } _ => Err(CustomLangError::type_err("write_text() requires (string, value)")) } }
             "fs_append_text" => { if argc != 2 { return err_argc("2"); } match (&args[0],&args[1]) { (Value::Str(p),c) => { use std::io::Write as W; let mut f = std::fs::OpenOptions::new().create(true).append(true).open(p).map_err(|e| CustomLangError::io_err(format!("append: {e}")))?; write!(f, "{}", c).map_err(|e| CustomLangError::io_err(format!("append: {e}")))?; Ok(Value::Bool(true)) } _ => Err(CustomLangError::type_err("append_text() requires (string, value)")) } }
@@ -2347,7 +2559,7 @@ impl Interpreter {
             "fs_temp_file" => { let t = std::env::temp_dir().join(format!("cl_tmp_{}", lcg_rand(42) % 1000000)); Ok(Value::Str(t.to_string_lossy().to_string())) }
             "fs_temp_dir" => { Ok(Value::Str(std::env::temp_dir().to_string_lossy().to_string())) }
 
-            // ── Path ──────────────────────────────────────────────────────
+            // â”€â”€ Path â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             "path_join" => { let parts: Vec<String> = args.iter().map(|v| v.to_string()).collect(); let p = parts.iter().fold(std::path::PathBuf::new(), |mut acc, p| { acc.push(p); acc }); Ok(Value::Str(p.to_string_lossy().to_string())) }
             "path_dirname" => { if argc != 1 { return err_argc("1"); } match &args[0] { Value::Str(p) => Ok(Value::Str(std::path::Path::new(p).parent().map(|p| p.to_string_lossy().to_string()).unwrap_or(".".to_string()))), _ => Err(CustomLangError::type_err("dirname() requires string")) } }
             "path_basename" => { if argc != 1 { return err_argc("1"); } match &args[0] { Value::Str(p) => Ok(Value::Str(std::path::Path::new(p).file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default())), _ => Err(CustomLangError::type_err("basename() requires string")) } }
@@ -2358,7 +2570,7 @@ impl Interpreter {
             "path_split" => { if argc != 1 { return err_argc("1"); } match &args[0] { Value::Str(p) => Ok(Value::make_array(std::path::Path::new(p).components().map(|c| Value::Str(c.as_os_str().to_string_lossy().to_string())).collect())), _ => Err(CustomLangError::type_err("split() requires string")) } }
             "path_is_absolute" => { if argc != 1 { return err_argc("1"); } match &args[0] { Value::Str(p) => Ok(Value::Bool(std::path::Path::new(p).is_absolute())), _ => Err(CustomLangError::type_err("is_absolute() requires string")) } }
 
-            // ── Process ───────────────────────────────────────────────────
+            // â”€â”€ Process â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             "proc_args" => Ok(Value::make_array(std::env::args().map(Value::Str).collect())),
             "proc_env" => { if argc != 1 { return err_argc("1"); } match &args[0] { Value::Str(k) => Ok(std::env::var(k).map(Value::Str).unwrap_or(Value::Null)), _ => Err(CustomLangError::type_err("env() requires string")) } }
             "proc_env_all" => { let mut map = HashMap::new(); for (k,v) in std::env::vars() { map.insert(k, Value::Str(v)); } Ok(Value::make_object(map)) }
@@ -2385,7 +2597,7 @@ impl Interpreter {
                 }
             }
 
-            // ── HTTP ──────────────────────────────────────────────────────
+            // â”€â”€ HTTP â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             "http_get" => {
                 if argc < 1 { return err_argc("1+"); }
                 match &args[0] {
@@ -2449,13 +2661,13 @@ impl Interpreter {
                 }
             }
 
-            // ── Encoding ──────────────────────────────────────────────────
+            // â”€â”€ Encoding â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             "enc_url_encode" => { if argc != 1 { return err_argc("1"); } match &args[0] { Value::Str(s) => Ok(Value::Str(url_encode(s))), _ => Err(CustomLangError::type_err("url_encode() requires string")) } }
             "enc_url_decode" => { if argc != 1 { return err_argc("1"); } match &args[0] { Value::Str(s) => Ok(Value::Str(url_decode(s))), _ => Err(CustomLangError::type_err("url_decode() requires string")) } }
             "enc_html_encode" => { if argc != 1 { return err_argc("1"); } match &args[0] { Value::Str(s) => Ok(Value::Str(s.replace('&',"&amp;").replace('<',"&lt;").replace('>',"&gt;").replace('"',"&quot;").replace('\'',"&#x27;"))), _ => Err(CustomLangError::type_err("html_encode() requires string")) } }
             "enc_html_decode" => { if argc != 1 { return err_argc("1"); } match &args[0] { Value::Str(s) => Ok(Value::Str(s.replace("&amp;","&").replace("&lt;","<").replace("&gt;",">").replace("&quot;","\"").replace("&#x27;","'"))), _ => Err(CustomLangError::type_err("html_decode() requires string")) } }
 
-            // ── Crypto ────────────────────────────────────────────────────
+            // â”€â”€ Crypto â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             "crypto_sha256" => { if argc != 1 { return err_argc("1"); } let s = args[0].to_string(); Ok(Value::Str(sha256_hex(s.as_bytes()))) }
             "crypto_sha512" => { if argc != 1 { return err_argc("1"); } let s = args[0].to_string(); Ok(Value::Str(sha512_hex(s.as_bytes()))) }
             "crypto_md5" => { if argc != 1 { return err_argc("1"); } let s = args[0].to_string(); Ok(Value::Str(md5_hex(s.as_bytes()))) }
@@ -2467,7 +2679,7 @@ impl Interpreter {
             "crypto_random_bytes" => { if argc != 1 { return err_argc("1"); } match args[0] { Value::Number(n) => { let bytes: Vec<u8> = (0..n as usize).map(|_| lcg_rand(42) as u8).collect(); Ok(Value::Str(hex_encode(&bytes))) } _ => Err(CustomLangError::type_err("random_bytes() requires number")) } }
             "crypto_compare_secure" => { if argc != 2 { return err_argc("2"); } match (&args[0],&args[1]) { (Value::Str(a),Value::Str(b)) => { let same = a.len() == b.len() && a.bytes().zip(b.bytes()).all(|(x,y)| x == y); Ok(Value::Bool(same)) } _ => Err(CustomLangError::type_err("compare_secure() requires (string, string)")) } }
 
-            // ── Regex ─────────────────────────────────────────────────────
+            // â”€â”€ Regex â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             "regex_new" => { if argc < 1 { return err_argc("1+"); } match &args[0] { Value::Str(pattern) => { // Store pattern as object
                 let mut map = HashMap::new();
                 map.insert("pattern".to_string(), Value::Str(pattern.clone()));
@@ -2476,57 +2688,53 @@ impl Interpreter {
             } _ => Err(CustomLangError::type_err("regex.new() requires string pattern")) } }
             "regex_test" | "regex_test_method" => {
                 if argc != 2 { return err_argc("2"); }
-                match (&args[0], &args[1]) {
-                    (Value::Str(pattern), Value::Str(text)) | (Value::Str(text), Value::Str(pattern)) => {
-                        let re = regex::Regex::new(pattern).map_err(|e| CustomLangError::runtime(format!("regex error: {e}")))?;
-                        Ok(Value::Bool(re.is_match(text)))
-                    }
-                    _ => Err(CustomLangError::type_err("regex_test() requires (string, string)")),
+                let pattern = Self::extract_regex_pattern(&args[0]);
+                let text = if let Value::Str(s) = &args[1] { s.clone() } else { args[1].to_string() };
+                match pattern {
+                    Some(p) => { let re = regex::Regex::new(&p).map_err(|e| CustomLangError::runtime(format!("regex error: {e}")))?; Ok(Value::Bool(re.is_match(&text))) }
+                    None => Err(CustomLangError::type_err("regex.test() requires pattern as first arg")),
                 }
             }
             "regex_match" => {
                 if argc != 2 { return err_argc("2"); }
-                match (&args[0], &args[1]) {
-                    (Value::Str(pattern), Value::Str(text)) => {
-                        let re = regex::Regex::new(pattern).map_err(|e| CustomLangError::runtime(format!("regex error: {e}")))?;
-                        Ok(re.find(text).map(|m| Value::Str(m.as_str().to_string())).unwrap_or(Value::Null))
-                    }
-                    _ => Err(CustomLangError::type_err("regex_match() requires (string, string)")),
+                let pattern = Self::extract_regex_pattern(&args[0]);
+                let text = if let Value::Str(s) = &args[1] { s.clone() } else { args[1].to_string() };
+                match pattern {
+                    Some(p) => { let re = regex::Regex::new(&p).map_err(|e| CustomLangError::runtime(format!("regex error: {e}")))?; Ok(re.find(&text).map(|m| Value::Str(m.as_str().to_string())).unwrap_or(Value::Null)) }
+                    None => Err(CustomLangError::type_err("regex.match() requires pattern as first arg")),
                 }
             }
             "regex_match_all" => {
                 if argc != 2 { return err_argc("2"); }
-                match (&args[0], &args[1]) {
-                    (Value::Str(pattern), Value::Str(text)) => {
-                        let re = regex::Regex::new(pattern).map_err(|e| CustomLangError::runtime(format!("regex error: {e}")))?;
-                        let matches: Vec<Value> = re.find_iter(text).map(|m| Value::Str(m.as_str().to_string())).collect();
-                        Ok(Value::make_array(matches))
-                    }
-                    _ => Err(CustomLangError::type_err("regex_match_all() requires (string, string)")),
+                let pattern = Self::extract_regex_pattern(&args[0]);
+                let text = if let Value::Str(s) = &args[1] { s.clone() } else { args[1].to_string() };
+                match pattern {
+                    Some(p) => { let re = regex::Regex::new(&p).map_err(|e| CustomLangError::runtime(format!("regex error: {e}")))?; Ok(Value::make_array(re.find_iter(&text).map(|m| Value::Str(m.as_str().to_string())).collect())) }
+                    None => Err(CustomLangError::type_err("regex.match_all() requires pattern as first arg")),
                 }
             }
             "regex_replace" => {
                 if argc != 3 { return err_argc("3"); }
-                match (&args[0], &args[1], &args[2]) {
-                    (Value::Str(text), Value::Str(pattern), Value::Str(replacement)) => {
-                        let re = regex::Regex::new(pattern).map_err(|e| CustomLangError::runtime(format!("regex error: {e}")))?;
-                        Ok(Value::Str(re.replace(text, replacement.as_str()).to_string()))
-                    }
-                    _ => Err(CustomLangError::type_err("regex_replace() requires (string, string, string)")),
+                let pattern = Self::extract_regex_pattern(&args[0]);
+                let text = if let Value::Str(s) = &args[1] { s.clone() } else { args[1].to_string() };
+                let repl = if let Value::Str(s) = &args[2] { s.clone() } else { args[2].to_string() };
+                match pattern {
+                    Some(p) => { let re = regex::Regex::new(&p).map_err(|e| CustomLangError::runtime(format!("regex error: {e}")))?; Ok(Value::Str(re.replace(&text, repl.as_str()).to_string())) }
+                    None => Err(CustomLangError::type_err("regex.replace() requires pattern as first arg")),
                 }
             }
             "regex_replace_all" => {
                 if argc != 3 { return err_argc("3"); }
-                match (&args[0], &args[1], &args[2]) {
-                    (Value::Str(text), Value::Str(pattern), Value::Str(replacement)) => {
-                        let re = regex::Regex::new(pattern).map_err(|e| CustomLangError::runtime(format!("regex error: {e}")))?;
-                        Ok(Value::Str(re.replace_all(text, replacement.as_str()).to_string()))
-                    }
-                    _ => Err(CustomLangError::type_err("regex_replace_all() requires (string, string, string)")),
+                let pattern = Self::extract_regex_pattern(&args[0]);
+                let text = if let Value::Str(s) = &args[1] { s.clone() } else { args[1].to_string() };
+                let repl = if let Value::Str(s) = &args[2] { s.clone() } else { args[2].to_string() };
+                match pattern {
+                    Some(p) => { let re = regex::Regex::new(&p).map_err(|e| CustomLangError::runtime(format!("regex error: {e}")))?; Ok(Value::Str(re.replace_all(&text, repl.as_str()).to_string())) }
+                    None => Err(CustomLangError::type_err("regex.replace_all() requires pattern as first arg")),
                 }
             }
 
-            // ── DateTime ──────────────────────────────────────────────────
+            // â”€â”€ DateTime â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             "dt_now" => {
                 let now = chrono::Local::now();
                 let mut map = HashMap::new();
@@ -2563,7 +2771,7 @@ impl Interpreter {
                 if argc < 3 { return err_argc("3+"); }
                 match (&args[0], &args[1], &args[2]) {
                     (Value::Number(y), Value::Number(mo), Value::Number(d)) => {
-                        use chrono::{TimeZone, Datelike};
+                        use chrono::TimeZone;
                         let h = if argc > 3 { match args[3] { Value::Number(n) => n as u32, _ => 0 } } else { 0 };
                         let mi = if argc > 4 { match args[4] { Value::Number(n) => n as u32, _ => 0 } } else { 0 };
                         let s = if argc > 5 { match args[5] { Value::Number(n) => n as u32, _ => 0 } } else { 0 };
@@ -2583,7 +2791,7 @@ impl Interpreter {
             }
             "dt_format" | "dt_parse" => Ok(Value::Str(format!("{}", chrono::Local::now().format("%Y-%m-%d %H:%M:%S")))),
 
-            // ── Collections ───────────────────────────────────────────────
+            // â”€â”€ Collections â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             "coll_queue" => {
                 let mut map = HashMap::new();
                 let data = Value::make_array(vec![]);
@@ -2645,7 +2853,7 @@ impl Interpreter {
                 match &args[0] { Value::Object(o) => { if let Some(Value::Array(a)) = o.borrow().get("_data") { Ok(a.borrow().last().cloned().unwrap_or(Value::Null)) } else { Ok(Value::Null) } } _ => Err(CustomLangError::type_err("peek requires collection")) }
             }
 
-            // ── Testing ───────────────────────────────────────────────────
+            // â”€â”€ Testing â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             "test_run" => {
                 if argc != 2 { return err_argc("2"); }
                 match &args[0] {
@@ -2699,7 +2907,7 @@ impl Interpreter {
             "test_assert_false" => { if argc != 1 { return err_argc("1"); } if args[0].is_truthy() { return Err(CustomLangError::runtime(format!("assert_false failed: {}", args[0].repr()))); } Ok(Value::Null) }
             "test_before_each" | "test_after_each" => Ok(Value::Null),
 
-            // ── FP helpers ────────────────────────────────────────────────
+            // â”€â”€ FP helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             "partial" => {
                 if argc < 2 { return err_argc("2+"); }
                 let fn_val = args[0].clone();
@@ -2777,7 +2985,7 @@ impl Interpreter {
             }
             "deep_freeze" => { Ok(args.into_iter().next().unwrap_or(Value::Null)) }
 
-            // ── Generators ────────────────────────────────────────────────
+            // â”€â”€ Generators â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             "gen_next" => {
                 if argc != 1 { return err_argc("1"); }
                 match &args[0] {
@@ -2809,7 +3017,7 @@ impl Interpreter {
                 }
             }
 
-            // ── Result/Option types ───────────────────────────────────────
+            // â”€â”€ Result/Option types â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             "Ok" => { if argc != 1 { return err_argc("1"); } let mut m = HashMap::new(); m.insert("__ok__".to_string(), Value::Bool(true)); m.insert("value".to_string(), args[0].clone()); Ok(Value::make_object(m)) }
             "Err" => { if argc != 1 { return err_argc("1"); } let mut m = HashMap::new(); m.insert("__ok__".to_string(), Value::Bool(false)); m.insert("error".to_string(), args[0].clone()); Ok(Value::make_object(m)) }
             "Some" => { if argc != 1 { return err_argc("1"); } let mut m = HashMap::new(); m.insert("__some__".to_string(), Value::Bool(true)); m.insert("value".to_string(), args[0].clone()); Ok(Value::make_object(m)) }
@@ -2819,7 +3027,7 @@ impl Interpreter {
             "unwrap" => { if argc != 1 { return err_argc("1"); } match &args[0] { Value::Object(o) => { let b = o.borrow(); if matches!(b.get("__ok__"), Some(Value::Bool(true))) { Ok(b.get("value").cloned().unwrap_or(Value::Null)) } else if let Some(v) = b.get("value").or(b.get("error")) { Err(CustomLangError::runtime(format!("unwrap on Err: {}", v))) } else { Err(CustomLangError::runtime("unwrap failed")) } } _ => Ok(args[0].clone()) } }
             "unwrap_or" => { if argc != 2 { return err_argc("2"); } match &args[0] { Value::Object(o) => { let b = o.borrow(); if matches!(b.get("__ok__"), Some(Value::Bool(true))) { Ok(b.get("value").cloned().unwrap_or(Value::Null)) } else { Ok(args[1].clone()) } } _ => Ok(args[0].clone()) } }
 
-            // ── Promise (synchronous) ─────────────────────────────────────
+            // â”€â”€ Promise (synchronous) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             "Promise" => {
                 if argc != 1 { return err_argc("1"); }
                 let cb = args[0].clone();
@@ -2842,7 +3050,7 @@ impl Interpreter {
             "__promise_resolve__" => { if argc == 1 { Env::define(&self.env, "__promise_resolved__", args[0].clone()); } Ok(Value::Null) }
             "__promise_reject__" => { if argc == 1 { Env::define(&self.env, "__promise_rejected__", args[0].clone()); } Ok(Value::Null) }
 
-            // ── Misc ──────────────────────────────────────────────────────
+            // â”€â”€ Misc â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             "get_type" | "is_function" | "is_class" | "is_instance" => {
                 if argc < 1 { return err_argc("1"); }
                 match name {
@@ -2855,7 +3063,7 @@ impl Interpreter {
             }
             "instanceof_check" => { if argc != 2 { return err_argc("2"); } let name_str = args[1].to_string(); Ok(Value::Bool(args[0].is_instance_of(&name_str))) }
             "weakmap_new" | "weakref_new" => {
-                // WeakRef/WeakMap — just thin wrappers, no true GC
+                // WeakRef/WeakMap â€” just thin wrappers, no true GC
                 let mut map = HashMap::new();
                 map.insert("__weakref__".to_string(), Value::Bool(true));
                 if name == "weakref_new" && argc == 1 { map.insert("target".to_string(), args[0].clone()); }
@@ -2876,7 +3084,663 @@ impl Interpreter {
                 }
             }
 
+            // â”€â”€ Map class â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            "Map" | "map_new" => {
+                let mut map = HashMap::new();
+                let data: HashMap<String, Value> = HashMap::new();
+                map.insert("__map__".to_string(), Value::Bool(true));
+                map.insert("_data".to_string(), Value::make_object(data));
+                map.insert("size".to_string(), Value::Number(0.0));
+                // Methods stored as builtins
+                map.insert("set".to_string(), Value::Builtin("map_set".to_string()));
+                map.insert("get".to_string(), Value::Builtin("map_get".to_string()));
+                map.insert("has".to_string(), Value::Builtin("map_has".to_string()));
+                map.insert("delete".to_string(), Value::Builtin("map_delete".to_string()));
+                map.insert("keys".to_string(), Value::Builtin("map_keys".to_string()));
+                map.insert("values".to_string(), Value::Builtin("map_values".to_string()));
+                map.insert("entries".to_string(), Value::Builtin("map_entries".to_string()));
+                map.insert("clear".to_string(), Value::Builtin("map_clear".to_string()));
+                Ok(Value::make_object(map))
+            }
+            "map_set" => {
+                if argc != 3 { return err_argc("3"); }
+                match &args[0] {
+                    Value::Object(o) => {
+                        let data = o.borrow().get("_data").cloned();
+                        if let Some(Value::Object(d)) = data {
+                            d.borrow_mut().insert(args[1].to_string(), args[2].clone());
+                            let sz = d.borrow().len() as f64;
+                            o.borrow_mut().insert("size".to_string(), Value::Number(sz));
+                        }
+                        Ok(args[0].clone())
+                    }
+                    _ => Err(CustomLangError::type_err("map.set requires Map")),
+                }
+            }
+            "map_get" => {
+                if argc != 2 { return err_argc("2"); }
+                match &args[0] {
+                    Value::Object(o) => {
+                        let data = o.borrow().get("_data").cloned();
+                        if let Some(Value::Object(d)) = data { Ok(d.borrow().get(&args[1].to_string()).cloned().unwrap_or(Value::Null)) } else { Ok(Value::Null) }
+                    }
+                    _ => Err(CustomLangError::type_err("map.get requires Map")),
+                }
+            }
+            "map_has" => {
+                if argc != 2 { return err_argc("2"); }
+                match &args[0] {
+                    Value::Object(o) => {
+                        let data = o.borrow().get("_data").cloned();
+                        if let Some(Value::Object(d)) = data { Ok(Value::Bool(d.borrow().contains_key(&args[1].to_string()))) } else { Ok(Value::Bool(false)) }
+                    }
+                    _ => Err(CustomLangError::type_err("map.has requires Map")),
+                }
+            }
+            "map_delete" => {
+                if argc != 2 { return err_argc("2"); }
+                match &args[0] {
+                    Value::Object(o) => {
+                        let data = o.borrow().get("_data").cloned();
+                        let removed = if let Some(Value::Object(d)) = data {
+                            let r = d.borrow_mut().remove(&args[1].to_string()).is_some();
+                            let sz = d.borrow().len() as f64;
+                            o.borrow_mut().insert("size".to_string(), Value::Number(sz));
+                            r
+                        } else { false };
+                        Ok(Value::Bool(removed))
+                    }
+                    _ => Err(CustomLangError::type_err("map.delete requires Map")),
+                }
+            }
+            "map_keys" => {
+                if argc != 1 { return err_argc("1"); }
+                match &args[0] {
+                    Value::Object(o) => {
+                        let data = o.borrow().get("_data").cloned();
+                        if let Some(Value::Object(d)) = data { Ok(Value::make_array(d.borrow().keys().map(|k| Value::Str(k.clone())).collect())) } else { Ok(Value::make_array(vec![])) }
+                    }
+                    _ => Err(CustomLangError::type_err("map.keys requires Map")),
+                }
+            }
+            "map_vals" | "map_values" => {
+                if argc != 1 { return err_argc("1"); }
+                match &args[0] {
+                    Value::Object(o) => {
+                        let data = o.borrow().get("_data").cloned();
+                        if let Some(Value::Object(d)) = data { Ok(Value::make_array(d.borrow().values().cloned().collect())) } else { Ok(Value::make_array(vec![])) }
+                    }
+                    _ => Err(CustomLangError::type_err("map.values requires Map")),
+                }
+            }
+            "map_entries" => {
+                if argc != 1 { return err_argc("1"); }
+                match &args[0] {
+                    Value::Object(o) => {
+                        let data = o.borrow().get("_data").cloned();
+                        if let Some(Value::Object(d)) = data {
+                            Ok(Value::make_array(d.borrow().iter().map(|(k,v)| Value::make_array(vec![Value::Str(k.clone()), v.clone()])).collect()))
+                        } else { Ok(Value::make_array(vec![])) }
+                    }
+                    _ => Err(CustomLangError::type_err("map.entries requires Map")),
+                }
+            }
+            "map_clear" | "map_to_object" => {
+                if argc != 1 { return err_argc("1"); }
+                match &args[0] {
+                    Value::Object(o) => {
+                        let data = o.borrow().get("_data").cloned();
+                        if name == "map_clear" {
+                            if let Some(Value::Object(d)) = data { d.borrow_mut().clear(); }
+                            o.borrow_mut().insert("size".to_string(), Value::Number(0.0));
+                            Ok(Value::Null)
+                        } else {
+                            if let Some(Value::Object(d)) = data { Ok(Value::Object(d)) } else { Ok(Value::make_object(HashMap::new())) }
+                        }
+                    }
+                    _ => Err(CustomLangError::type_err("map operation requires Map")),
+                }
+            }
+
+            // â”€â”€ Set class â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            "Set" | "set_new" => {
+                let init_items = if argc == 1 { match &args[0] { Value::Array(a) => a.borrow().clone(), _ => vec![] } } else { vec![] };
+                let mut unique = Vec::new();
+                for item in init_items { if !unique.iter().any(|v: &Value| v.equals(&item)) { unique.push(item); } }
+                let mut map = HashMap::new();
+                map.insert("__set__".to_string(), Value::Bool(true));
+                map.insert("_data".to_string(), Value::make_array(unique.clone()));
+                map.insert("size".to_string(), Value::Number(unique.len() as f64));
+                map.insert("add".to_string(), Value::Builtin("set_add".to_string()));
+                map.insert("has".to_string(), Value::Builtin("set_has".to_string()));
+                map.insert("delete".to_string(), Value::Builtin("set_delete".to_string()));
+                map.insert("to_array".to_string(), Value::Builtin("set_to_array".to_string()));
+                map.insert("union".to_string(), Value::Builtin("set_union".to_string()));
+                map.insert("intersection".to_string(), Value::Builtin("set_intersection".to_string()));
+                map.insert("difference".to_string(), Value::Builtin("set_difference".to_string()));
+                map.insert("clear".to_string(), Value::Builtin("set_clear".to_string()));
+                Ok(Value::make_object(map))
+            }
+            "set_add" => {
+                if argc != 2 { return err_argc("2"); }
+                match &args[0] {
+                    Value::Object(o) => {
+                        let data = o.borrow().get("_data").cloned();
+                        if let Some(Value::Array(d)) = data {
+                            if !d.borrow().iter().any(|v| v.equals(&args[1])) { d.borrow_mut().push(args[1].clone()); }
+                            let sz = d.borrow().len() as f64;
+                            o.borrow_mut().insert("size".to_string(), Value::Number(sz));
+                        }
+                        Ok(args[0].clone())
+                    }
+                    _ => Err(CustomLangError::type_err("set.add requires Set")),
+                }
+            }
+            "set_has" => {
+                if argc != 2 { return err_argc("2"); }
+                match &args[0] {
+                    Value::Object(o) => {
+                        let data = o.borrow().get("_data").cloned();
+                        if let Some(Value::Array(d)) = data { Ok(Value::Bool(d.borrow().iter().any(|v| v.equals(&args[1])))) } else { Ok(Value::Bool(false)) }
+                    }
+                    _ => Err(CustomLangError::type_err("set.has requires Set")),
+                }
+            }
+            "set_delete" => {
+                if argc != 2 { return err_argc("2"); }
+                match &args[0] {
+                    Value::Object(o) => {
+                        let data = o.borrow().get("_data").cloned();
+                        if let Some(Value::Array(d)) = data {
+                            let before = d.borrow().len();
+                            d.borrow_mut().retain(|v| !v.equals(&args[1]));
+                            let after = d.borrow().len();
+                            o.borrow_mut().insert("size".to_string(), Value::Number(after as f64));
+                            Ok(Value::Bool(before != after))
+                        } else { Ok(Value::Bool(false)) }
+                    }
+                    _ => Err(CustomLangError::type_err("set.delete requires Set")),
+                }
+            }
+            "set_to_array" => {
+                if argc != 1 { return err_argc("1"); }
+                match &args[0] {
+                    Value::Object(o) => {
+                        let data = o.borrow().get("_data").cloned();
+                        if let Some(Value::Array(d)) = data { Ok(Value::make_array(d.borrow().clone())) } else { Ok(Value::make_array(vec![])) }
+                    }
+                    _ => Err(CustomLangError::type_err("set.to_array requires Set")),
+                }
+            }
+            "set_union" | "set_intersection" | "set_difference" => {
+                if argc != 2 { return err_argc("2"); }
+                let get_data = |o: &Value| -> Vec<Value> { if let Value::Object(obj) = o { if let Some(Value::Array(d)) = obj.borrow().get("_data") { return d.borrow().clone(); } } vec![] };
+                let a = get_data(&args[0]);
+                let b = get_data(&args[1]);
+                let result = match name {
+                    "set_union" => { let mut r = a.clone(); for item in b { if !r.iter().any(|v| v.equals(&item)) { r.push(item); } } r }
+                    "set_intersection" => a.iter().filter(|v| b.iter().any(|bv| v.equals(bv))).cloned().collect(),
+                    _ => a.iter().filter(|v| !b.iter().any(|bv| v.equals(bv))).cloned().collect(),
+                };
+                self.call_builtin("Set", vec![Value::make_array(result)], pos)
+            }
+            "set_clear" => {
+                if argc != 1 { return err_argc("1"); }
+                match &args[0] {
+                    Value::Object(o) => {
+                        let data = o.borrow().get("_data").cloned();
+                        if let Some(Value::Array(d)) = data { d.borrow_mut().clear(); }
+                        o.borrow_mut().insert("size".to_string(), Value::Number(0.0));
+                        Ok(Value::Null)
+                    }
+                    _ => Err(CustomLangError::type_err("set.clear requires Set")),
+                }
+            }
+
+            // â”€â”€ Promise extensions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            "promise_then" => {
+                if argc != 2 { return err_argc("2"); }
+                match &args[0] {
+                    Value::Object(o) => {
+                        let cb = args[1].clone();
+                        let val = o.borrow().get("value").cloned().unwrap_or(Value::Null);
+                        let err = o.borrow().get("error").cloned().unwrap_or(Value::Null);
+                        let is_ok = !matches!(err, Value::Null);
+                        if !is_ok || matches!(val, Value::Null) {
+                            let result = self.call_value(cb, vec![val], None, pos)?;
+                            let mut map = HashMap::new();
+                            map.insert("value".to_string(), result);
+                            map.insert("error".to_string(), Value::Null);
+                            map.insert("__promise__".to_string(), Value::Bool(true));
+                            map.insert("then".to_string(), Value::Builtin("promise_then".to_string()));
+                            map.insert("catch".to_string(), Value::Builtin("promise_catch".to_string()));
+                            map.insert("finally".to_string(), Value::Builtin("promise_finally".to_string()));
+                            Ok(Value::make_object(map))
+                        } else {
+                            Ok(args[0].clone())
+                        }
+                    }
+                    _ => Err(CustomLangError::type_err("then() requires Promise")),
+                }
+            }
+            "promise_catch" => {
+                if argc != 2 { return err_argc("2"); }
+                match &args[0] {
+                    Value::Object(o) => {
+                        let cb = args[1].clone();
+                        let err = o.borrow().get("error").cloned().unwrap_or(Value::Null);
+                        if !matches!(err, Value::Null) {
+                            self.call_value(cb, vec![err], None, pos)?;
+                        }
+                        Ok(args[0].clone())
+                    }
+                    _ => Err(CustomLangError::type_err("catch() requires Promise")),
+                }
+            }
+            "promise_finally" => {
+                if argc != 2 { return err_argc("2"); }
+                let cb = args[1].clone();
+                self.call_value(cb, vec![], None, pos)?;
+                Ok(args[0].clone())
+            }
+            "promise_all" => {
+                if argc != 1 { return err_argc("1"); }
+                match &args[0] {
+                    Value::Array(arr) => {
+                        let items = arr.borrow().clone();
+                        let mut results = Vec::new();
+                        for item in items {
+                            let val = if let Value::Object(o) = &item { o.borrow().get("value").cloned().unwrap_or(Value::Null) } else { item };
+                            results.push(val);
+                        }
+                        Ok(Value::make_array(results))
+                    }
+                    _ => Err(CustomLangError::type_err("Promise.all requires array")),
+                }
+            }
+            "promise_race" => {
+                if argc != 1 { return err_argc("1"); }
+                match &args[0] {
+                    Value::Array(arr) => {
+                        let items = arr.borrow();
+                        Ok(items.first().cloned().unwrap_or(Value::Null))
+                    }
+                    _ => Err(CustomLangError::type_err("Promise.race requires array")),
+                }
+            }
+
+            // â”€â”€ Channel (synchronous) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            "Channel" | "channel_new" => {
+                let _buf = if argc == 1 { match args[0] { Value::Number(n) => n as usize, _ => 0 } } else { 0 };
+                let mut map = HashMap::new();
+                map.insert("__channel__".to_string(), Value::Bool(true));
+                map.insert("_data".to_string(), Value::make_array(vec![]));
+                map.insert("_closed".to_string(), Value::Bool(false));
+                map.insert("send".to_string(), Value::Builtin("chan_send".to_string()));
+                map.insert("recv".to_string(), Value::Builtin("chan_recv".to_string()));
+                map.insert("close".to_string(), Value::Builtin("chan_close".to_string()));
+                Ok(Value::make_object(map))
+            }
+            "chan_send" => { if argc != 2 { return err_argc("2"); } match &args[0] { Value::Object(o) => { if let Some(Value::Array(d)) = o.borrow().get("_data") { d.borrow_mut().push(args[1].clone()); } Ok(Value::Null) } _ => Err(CustomLangError::type_err("channel.send requires Channel")) } }
+            "chan_recv" => { if argc != 1 { return err_argc("1"); } match &args[0] { Value::Object(o) => { if let Some(Value::Array(d)) = o.borrow().get("_data") { Ok(if d.borrow().is_empty() { Value::Null } else { d.borrow_mut().remove(0) }) } else { Ok(Value::Null) } } _ => Err(CustomLangError::type_err("channel.recv requires Channel")) } }
+            "chan_close" => { if argc != 1 { return err_argc("1"); } match &args[0] { Value::Object(o) => { o.borrow_mut().insert("_closed".to_string(), Value::Bool(true)); Ok(Value::Null) } _ => Err(CustomLangError::type_err("channel.close requires Channel")) } }
+
+            // â”€â”€ Actor model â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            "spawn_actor" => {
+                if argc != 1 { return err_argc("1"); }
+                let handler = args[0].clone();
+                let mut map = HashMap::new();
+                map.insert("__actor__".to_string(), Value::Bool(true));
+                map.insert("_state".to_string(), Value::Null);
+                map.insert("_handler".to_string(), handler);
+                map.insert("_mailbox".to_string(), Value::make_array(vec![]));
+                map.insert("send".to_string(), Value::Builtin("actor_send".to_string()));
+                map.insert("ask".to_string(), Value::Builtin("actor_ask".to_string()));
+                Ok(Value::make_object(map))
+            }
+            "actor_send" => {
+                if argc != 2 { return err_argc("2"); }
+                match &args[0] {
+                    Value::Object(o) => {
+                        let handler = o.borrow().get("_handler").cloned().unwrap_or(Value::Null);
+                        let state = o.borrow().get("_state").cloned().unwrap_or(Value::Null);
+                        let new_state = self.call_value(handler, vec![state, args[1].clone()], None, pos)?;
+                        o.borrow_mut().insert("_state".to_string(), new_state);
+                        Ok(Value::Null)
+                    }
+                    _ => Err(CustomLangError::type_err("actor.send requires Actor")),
+                }
+            }
+            "actor_ask" => {
+                if argc != 2 { return err_argc("2"); }
+                match &args[0] {
+                    Value::Object(o) => {
+                        let handler = o.borrow().get("_handler").cloned().unwrap_or(Value::Null);
+                        let state = o.borrow().get("_state").cloned().unwrap_or(Value::Null);
+                        // Create a reply capture
+                        let mut reply_val = Value::Null;
+                        let mut msg = args[1].clone();
+                        if let Value::Object(ref m) = msg {
+                            let captured_reply = Rc::new(RefCell::new(Value::Null));
+                            let captured_clone = Rc::clone(&captured_reply);
+                            // Can't easily inject reply function; just call handler and return state
+                            let new_state = self.call_value(handler, vec![state.clone(), msg], None, pos)?;
+                            o.borrow_mut().insert("_state".to_string(), new_state.clone());
+                            return Ok(new_state);
+                        }
+                        let new_state = self.call_value(handler, vec![state, msg], None, pos)?;
+                        o.borrow_mut().insert("_state".to_string(), new_state.clone());
+                        Ok(new_state)
+                    }
+                    _ => Err(CustomLangError::type_err("actor.ask requires Actor")),
+                }
+            }
+
+            // â”€â”€ Sandbox â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            "sandbox_new" | "Sandbox" => {
+                let opts = if argc == 1 { args[0].clone() } else { Value::make_object(HashMap::new()) };
+                let allow_fs = if let Value::Object(o) = &opts { !matches!(o.borrow().get("allow_fs"), Some(Value::Bool(false))) } else { true };
+                let allow_network = if let Value::Object(o) = &opts { !matches!(o.borrow().get("allow_network"), Some(Value::Bool(false))) } else { true };
+                let timeout = if let Value::Object(o) = &opts { match o.borrow().get("timeout_ms") { Some(Value::Number(n)) => *n as u64, _ => 0 } } else { 0 };
+                let mut map = HashMap::new();
+                map.insert("__sandbox__".to_string(), Value::Bool(true));
+                map.insert("allow_fs".to_string(), Value::Bool(allow_fs));
+                map.insert("allow_network".to_string(), Value::Bool(allow_network));
+                map.insert("timeout_ms".to_string(), Value::Number(timeout as f64));
+                map.insert("eval".to_string(), Value::Builtin("sandbox_eval".to_string()));
+                Ok(Value::make_object(map))
+            }
+            "sandbox_eval" => {
+                if argc != 2 { return err_argc("2"); }
+                match &args[1] {
+                    Value::Str(code) => {
+                        // Create isolated interpreter
+                        let mut sandbox_interp = Interpreter::new();
+                        // Restrict based on allow_fs
+                        if let Value::Object(o) = &args[0] {
+                            if matches!(o.borrow().get("allow_fs"), Some(Value::Bool(false))) {
+                                // Remove fs builtins
+                                for name in ["read_file","write_file","append_file","fs_read_text","fs_write_text"] {
+                                    Env::define(&sandbox_interp.env, name, Value::Null);
+                                }
+                            }
+                        }
+                        let result = sandbox_interp.eval(code).unwrap_or(None);
+                        Ok(result.unwrap_or(Value::Null))
+                    }
+                    _ => Err(CustomLangError::type_err("sandbox.eval requires string")),
+                }
+            }
+
+            // â”€â”€ call_cc (continuations) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            "call_cc" => {
+                if argc != 1 { return err_argc("1"); }
+                // Simple: call function with an escape continuation
+                let cb = args[0].clone();
+                let mut escape_val = Value::Null;
+                let escape_fn = Value::Builtin("__escape__".to_string());
+                Env::define(&self.env, "__escape_triggered__", Value::Bool(false));
+                Env::define(&self.env, "__escape_value__", Value::Null);
+                match self.call_value(cb, vec![escape_fn], None, pos) {
+                    Ok(v) => Ok(v),
+                    Err(CustomLangError::ThrownException) => {
+                        Ok(self.thrown_value.take().unwrap_or(Value::Null))
+                    }
+                    Err(e) => Err(e),
+                }
+            }
+            "__escape__" => {
+                let v = args.into_iter().next().unwrap_or(Value::Null);
+                self.thrown_value = Some(v);
+                Err(CustomLangError::ThrownException)
+            }
+
+            // â”€â”€ Proxy â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            "Proxy" => {
+                if argc != 2 { return err_argc("2"); }
+                let mut map = HashMap::new();
+                map.insert("__proxy__".to_string(), Value::Bool(true));
+                map.insert("__target__".to_string(), args[0].clone());
+                map.insert("__handler__".to_string(), args[1].clone());
+                Ok(Value::make_object(map))
+            }
+
+            // â”€â”€ Watcher â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            "watcher_watch" => {
+                if argc != 2 { return err_argc("2"); }
+                // Simplified: just call the callback once immediately
+                let cb = args[1].clone();
+                self.call_value(cb, vec![], None, pos)?;
+                Ok(Value::Null)
+            }
+
+            // â”€â”€ Random extras â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            "random_sample" => {
+                if argc != 2 { return err_argc("2"); }
+                match (&args[0], &args[1]) {
+                    (Value::Array(arr), Value::Number(n)) => {
+                        let mut items = arr.borrow().clone();
+                        let count = (*n as usize).min(items.len());
+                        let mut seed = lcg_rand(42);
+                        for i in (1..items.len()).rev() {
+                            seed = lcg_rand(seed as u32);
+                            let j = (seed % (i + 1) as u64) as usize;
+                            items.swap(i, j);
+                        }
+                        Ok(Value::make_array(items[..count].to_vec()))
+                    }
+                    _ => Err(CustomLangError::type_err("sample() requires (array, number)")),
+                }
+            }
+            "random_seed" => { Ok(Value::Null) } // LCG handles seeding automatically
+            "random_uuid" => {
+                let a = lcg_rand(42); let b = lcg_rand(a as u32); let c = lcg_rand(b as u32); let d = lcg_rand(c as u32);
+                Ok(Value::Str(format!("{:08x}-{:04x}-4{:03x}-{:04x}-{:012x}", a as u32, (b >> 48) as u16, (b >> 32) as u16 & 0x0fff, (b >> 16) as u16 | 0x8000, c & 0xffffffffffff)))
+            }
+
+            // â”€â”€ CSV/TOML/YAML â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            "csv_parse" => {
+                if argc != 1 { return err_argc("1"); }
+                match &args[0] {
+                    Value::Str(s) => {
+                        let mut rows = Vec::new();
+                        let lines: Vec<&str> = s.lines().collect();
+                        let headers: Vec<&str> = if !lines.is_empty() { lines[0].split(',').collect() } else { vec![] };
+                        for line in lines.iter().skip(1) {
+                            if line.trim().is_empty() { continue; }
+                            let vals: Vec<&str> = line.split(',').collect();
+                            let mut row = HashMap::new();
+                            for (h, v) in headers.iter().zip(vals.iter()) {
+                                row.insert(h.trim().to_string(), Value::Str(v.trim().to_string()));
+                            }
+                            rows.push(Value::make_object(row));
+                        }
+                        Ok(Value::make_array(rows))
+                    }
+                    _ => Err(CustomLangError::type_err("csv.parse requires string")),
+                }
+            }
+            "csv_stringify" => {
+                if argc != 1 { return err_argc("1"); }
+                match &args[0] {
+                    Value::Array(arr) => {
+                        let items = arr.borrow().clone();
+                        if items.is_empty() { return Ok(Value::Str(String::new())); }
+                        let mut out = String::new();
+                        if let Value::Object(first) = &items[0] {
+                            let keys: Vec<String> = first.borrow().keys().cloned().collect();
+                            out.push_str(&keys.join(","));
+                            out.push('\n');
+                            for item in &items {
+                                if let Value::Object(row) = item {
+                                    let vals: Vec<String> = keys.iter().map(|k| row.borrow().get(k).map(|v| v.to_string()).unwrap_or_default()).collect();
+                                    out.push_str(&vals.join(","));
+                                    out.push('\n');
+                                }
+                            }
+                        }
+                        Ok(Value::Str(out))
+                    }
+                    _ => Err(CustomLangError::type_err("csv.stringify requires array")),
+                }
+            }
+            "toml_parse" | "yaml_parse" | "ini_parse" => {
+                // Simplified: parse as simple key=value or key: value
+                if argc != 1 { return err_argc("1"); }
+                match &args[0] {
+                    Value::Str(s) => {
+                        let mut map = HashMap::new();
+                        for line in s.lines() {
+                            let line = line.trim();
+                            if line.is_empty() || line.starts_with('#') || line.starts_with('[') { continue; }
+                            let sep = if line.contains('=') { '=' } else { ':' };
+                            if let Some(pos_eq) = line.find(sep) {
+                                let key = line[..pos_eq].trim().to_string();
+                                let val = line[pos_eq+1..].trim().trim_matches('"').trim_matches('\'').to_string();
+                                map.insert(key, Value::Str(val));
+                            }
+                        }
+                        Ok(Value::make_object(map))
+                    }
+                    _ => Err(CustomLangError::type_err("parse() requires string")),
+                }
+            }
+
+            // â”€â”€ PriorityQueue â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            "priority_queue_new" | "PriorityQueue" => {
+                let cmp = if argc == 1 { args[0].clone() } else { Value::Null };
+                let mut map = HashMap::new();
+                map.insert("__pq__".to_string(), Value::Bool(true));
+                map.insert("_data".to_string(), Value::make_array(vec![]));
+                map.insert("_cmp".to_string(), cmp);
+                map.insert("enqueue".to_string(), Value::Builtin("pq_enqueue".to_string()));
+                map.insert("dequeue".to_string(), Value::Builtin("pq_dequeue".to_string()));
+                map.insert("peek".to_string(), Value::Builtin("pq_peek".to_string()));
+                map.insert("is_empty".to_string(), Value::Builtin("coll_is_empty".to_string()));
+                Ok(Value::make_object(map))
+            }
+            "pq_enqueue" => {
+                if argc != 2 { return err_argc("2"); }
+                match &args[0] {
+                    Value::Object(o) => {
+                        let cmp = o.borrow().get("_cmp").cloned().unwrap_or(Value::Null);
+                        if let Some(Value::Array(d)) = o.borrow().get("_data") {
+                            d.borrow_mut().push(args[1].clone());
+                            if !matches!(cmp, Value::Null) {
+                                let cmp2 = cmp.clone();
+                                let mut err = None;
+                                d.borrow_mut().sort_by(|a, b| {
+                                    match self.call_value(cmp2.clone(), vec![a.clone(), b.clone()], None, pos) {
+                                        Ok(Value::Number(n)) => if n < 0.0 { std::cmp::Ordering::Less } else if n > 0.0 { std::cmp::Ordering::Greater } else { std::cmp::Ordering::Equal },
+                                        Err(e) => { err = Some(e); std::cmp::Ordering::Equal }
+                                        _ => std::cmp::Ordering::Equal,
+                                    }
+                                });
+                                if let Some(e) = err { return Err(e); }
+                            }
+                        }
+                        Ok(Value::Null)
+                    }
+                    _ => Err(CustomLangError::type_err("pq.enqueue requires PriorityQueue")),
+                }
+            }
+            "pq_dequeue" => { if argc != 1 { return err_argc("1"); } match &args[0] { Value::Object(o) => { if let Some(Value::Array(d)) = o.borrow().get("_data") { Ok(if d.borrow().is_empty() { Value::Null } else { d.borrow_mut().remove(0) }) } else { Ok(Value::Null) } } _ => Err(CustomLangError::type_err("pq.dequeue requires PriorityQueue")) } }
+            "pq_peek" => { if argc != 1 { return err_argc("1"); } match &args[0] { Value::Object(o) => { if let Some(Value::Array(d)) = o.borrow().get("_data") { Ok(d.borrow().first().cloned().unwrap_or(Value::Null)) } else { Ok(Value::Null) } } _ => Err(CustomLangError::type_err("pq.peek requires PriorityQueue")) } }
+
+            // â”€â”€ FS extras â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            "fs_list_dir_recursive" => {
+                if argc != 1 { return err_argc("1"); }
+                match &args[0] {
+                    Value::Str(p) => {
+                        let mut result = Vec::new();
+                        collect_files(p, &mut result);
+                        Ok(Value::make_array(result))
+                    }
+                    _ => Err(CustomLangError::type_err("list_dir_recursive() requires string")),
+                }
+            }
+
+            // â”€â”€ Process spawn â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            "proc_spawn" => {
+                if argc < 1 { return err_argc("1+"); }
+                match &args[0] {
+                    Value::Str(cmd) => {
+                        let cmd_args: Vec<String> = if argc > 1 { match &args[1] { Value::Array(a) => a.borrow().iter().map(|v| v.to_string()).collect(), _ => vec![] } } else { vec![] };
+                        let mut map = HashMap::new();
+                        map.insert("cmd".to_string(), Value::Str(cmd.clone()));
+                        map.insert("args".to_string(), Value::make_array(cmd_args.iter().map(|s| Value::Str(s.clone())).collect()));
+                        map.insert("write".to_string(), Value::Builtin("proc_spawn_write".to_string()));
+                        map.insert("read_line".to_string(), Value::Builtin("proc_spawn_read".to_string()));
+                        map.insert("kill".to_string(), Value::Builtin("proc_spawn_kill".to_string()));
+                        Ok(Value::make_object(map))
+                    }
+                    _ => Err(CustomLangError::type_err("spawn() requires string")),
+                }
+            }
+            "proc_spawn_write" | "proc_spawn_read" | "proc_spawn_kill" => Ok(Value::Null),
+
+            // â”€â”€ Advanced format strings â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            "format_advanced" => {
+                if argc < 1 { return err_argc("1+"); }
+                match &args[0] {
+                    Value::Str(template) => {
+                        let result = advanced_format(template, &args[1..]);
+                        Ok(Value::Str(result))
+                    }
+                    _ => Err(CustomLangError::type_err("format() first argument must be string")),
+                }
+            }
+
+            // â”€â”€ Named arg support â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            "named_call" => {
+                // named_call(fn, {key: val}) - call function with named args
+                if argc != 2 { return err_argc("2"); }
+                match (&args[0], &args[1]) {
+                    (func, Value::Object(_)) => {
+                        let func = func.clone();
+                        self.call_value(func, vec![args[1].clone()], None, pos)
+                    }
+                    _ => Err(CustomLangError::type_err("named_call() requires (function, object)")),
+                }
+            }
+
+            // â”€â”€ Typeof operator â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            "typeof" => {
+                if argc != 1 { return err_argc("1"); }
+                Ok(Value::Str(args[0].type_name().to_string()))
+            }
+
+            // â”€â”€ TCO helper â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            "trampoline" => {
+                if argc != 2 { return err_argc("2"); }
+                // trampoline(fn, initial_args) - keeps calling fn while result is callable
+                let mut result = self.call_value(args[0].clone(), if let Value::Array(a) = &args[1] { a.borrow().clone() } else { vec![args[1].clone()] }, None, pos)?;
+                let mut iterations = 0;
+                while (matches!(&result, Value::Function(_)) || matches!(&result, Value::Object(_))) && iterations < 1000000 {
+                    result = match result {
+                        Value::Function(fd) => self.call_fn(&fd, vec![], None, pos)?,
+                        _ => break,
+                    };
+                    iterations += 1;
+                }
+                Ok(result)
+            }
+
+            // â”€â”€ Macro support â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            "define_macro" => {
+                if argc != 2 { return err_argc("2"); }
+                match &args[0] { Value::Str(name) => { let name = name.clone(); Env::define(&self.env, &name, args[1].clone()); Ok(Value::Null) } _ => Err(CustomLangError::type_err("define_macro() requires (string, function)")) }
+            }
+
             _ => Err(CustomLangError::runtime(format!("unknown builtin function '{name}'")).with_pos(pos)),
+        }
+    }
+
+    fn extract_regex_pattern(v: &Value) -> Option<String> {
+        match v {
+            Value::Str(s) => Some(s.clone()),
+            Value::Object(o) => o.borrow().get("pattern").and_then(|p| if let Value::Str(s) = p { Some(s.clone()) } else { None }),
+            _ => None,
         }
     }
 
@@ -2892,7 +3756,7 @@ impl Default for Interpreter {
     fn default() -> Self { Self::new() }
 }
 
-// ─────────────────────────────── Extension trait ─────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ Extension trait â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 trait ErrorExt {
     fn with_pos(self, pos: &Position) -> Self;
@@ -2902,7 +3766,7 @@ impl ErrorExt for CustomLangError {
     fn with_pos(self, _pos: &Position) -> Self { self }
 }
 
-// ─────────────────────────────── JSON codec ──────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ JSON codec â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 fn parse_json(s: &str) -> std::result::Result<Value, String> {
     let s = s.trim();
@@ -3016,7 +3880,7 @@ fn stringify_json(v: &Value, indent: Option<usize>, depth: usize) -> String {
     }
 }
 
-// ─────────────────────────────── LCG random ──────────────────────────────────
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ LCG random â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 fn lcg_rand(seed: u32) -> u64 {
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -3150,3 +4014,87 @@ fn hmac_sha256_hex(key: &[u8], msg: &[u8]) -> String {
 }
 
 use chrono::{Datelike, Timelike};
+
+fn collect_files(dir: &str, result: &mut Vec<Value>) {
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let path_str = path.to_string_lossy().to_string();
+            if path.is_dir() {
+                collect_files(&path_str, result);
+            } else {
+                result.push(Value::Str(path_str));
+            }
+        }
+    }
+}
+
+fn advanced_format(template: &str, args: &[Value]) -> String {
+    let mut result = String::new();
+    let mut chars = template.chars().peekable();
+    let mut arg_idx = 0;
+    while let Some(c) = chars.next() {
+        if c == '{' {
+            if chars.peek() == Some(&'{') {
+                chars.next();
+                result.push('{');
+                continue;
+            }
+            let mut spec = String::new();
+            for ch in chars.by_ref() {
+                if ch == '}' { break; }
+                spec.push(ch);
+            }
+            let val = args.get(arg_idx).cloned().unwrap_or(Value::Null);
+            arg_idx += 1;
+            result.push_str(&apply_format_spec(&val, &spec));
+        } else if c == '}' && chars.peek() == Some(&'}') {
+            chars.next();
+            result.push('}');
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
+fn apply_format_spec(val: &Value, spec: &str) -> String {
+    if spec.is_empty() { return val.to_string(); }
+    if let Value::Number(n) = val {
+        if spec.starts_with(".") && spec.ends_with('f') {
+            let prec: usize = spec[1..spec.len()-1].parse().unwrap_or(2);
+            return format!("{:.prec$}", n);
+        }
+        if spec.ends_with('x') {
+            let width: usize = spec[..spec.len()-1].parse().unwrap_or(0);
+            return format!("{:0>width$x}", *n as i64);
+        }
+        if spec.ends_with('b') {
+            return format!("{:b}", *n as i64);
+        }
+        if spec.ends_with('d') {
+            let pad_spec = &spec[..spec.len()-1];
+            if pad_spec.starts_with('0') {
+                let width: usize = pad_spec.parse().unwrap_or(0);
+                return format!("{:0>width$}", *n as i64);
+            }
+        }
+        if spec.starts_with('>') {
+            let width: usize = spec[1..].parse().unwrap_or(0);
+            return format!("{:>width$}", val.to_string());
+        }
+        if spec.starts_with('<') {
+            let width: usize = spec[1..].parse().unwrap_or(0);
+            return format!("{:<width$}", val.to_string());
+        }
+    }
+    if spec.starts_with('>') {
+        let width: usize = spec[1..].parse().unwrap_or(0);
+        return format!("{:>width$}", val.to_string());
+    }
+    if spec.starts_with('<') {
+        let width: usize = spec[1..].parse().unwrap_or(0);
+        return format!("{:<width$}", val.to_string());
+    }
+    val.to_string()
+}

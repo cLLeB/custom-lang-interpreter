@@ -122,6 +122,14 @@ impl SemanticAnalyzer {
         Ok(())
     }
 
+    /// Analyze and return lint hints (warnings) without failing
+    pub fn analyze_with_hints(&mut self, program: &Program) -> Vec<String> {
+        for stmt in &program.stmts {
+            self.check_stmt(stmt);
+        }
+        self.errors.iter().map(|e| format!("warning: {e}")).collect()
+    }
+
     fn push_scope(&mut self) {
         self.scopes.push(Scope::new());
     }
