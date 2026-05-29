@@ -371,11 +371,34 @@ jobs:
       run: cargo doc --no-deps 2>&1 | grep -i "warning\|error" || echo "Documentation generated successfully"
 
   # Release automation
-  release:
-    name: Create Release
-    runs-on: ubuntu-latest
-    needs: [quality, security, cross-platform, docs]
+  build-release:
+    name: Build Release Binaries (${{ matrix.name }})
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: [quality, security, cross-platform, docs]
+    strategy:
+      matrix:
+        include:
+          - name: Linux x86_64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: custom-lang-linux-x86_64
+            binary: custom-lang
+          - name: Windows x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: custom-lang-windows-x86_64.exe
+            binary: custom-lang.exe
+          - name: macOS x86_64
+            os: macos-latest
+            target: x86_64-apple-darwin
+            artifact: custom-lang-macos-x86_64
+            binary: custom-lang
+          - name: macOS arm64
+            os: macos-latest
+            target: aarch64-apple-darwin
+            artifact: custom-lang-macos-arm64
+            binary: custom-lang
+    runs-on: ${{ matrix.os }}
 
     steps:
     - name: Checkout code
@@ -383,25 +406,86 @@ jobs:
 
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: ${{ matrix.target }}
 
     - name: Build release binary
-      run: cargo build --release
+      run: cargo build --release --target ${{ matrix.target }}
 
-    - name: Create release archive
+    - name: Rename binary (Unix)
+      if: runner.os != 'Windows'
+      run: cp target/${{ matrix.target }}/release/${{ matrix.binary }} ${{ matrix.artifact }}
+
+    - name: Rename binary (Windows)
+      if: runner.os == 'Windows'
+      run: copy target\${{ matrix.target }}\release\${{ matrix.binary }} ${{ matrix.artifact }}
+
+    - name: Upload binary artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.artifact }}
+        path: ${{ matrix.artifact }}
+        retention-days: 1
+
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [build-release]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Download all binaries
+      uses: actions/download-artifact@v4
+      with:
+        path: dist/
+
+    - name: Create source archive
       run: |
-        mkdir -p release
-        cp target/release/custom-lang release/
-        cp README.md CHANGELOG.md LICENSE release/
-        cp -r examples release/
-        tar -czf custom-lang-interpreter-${{ github.ref_name }}.tar.gz -C release .
+        mkdir -p release-assets
+        cp -r dist/*/* release-assets/ 2>/dev/null || true
+        cp README.md CHANGELOG.md LICENSE release-assets/
+        tar -czf custom-lang-${{ github.ref_name }}-examples.tar.gz examples/
 
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v2
       with:
-        files: custom-lang-interpreter-${{ github.ref_name }}.tar.gz
+        files: |
+          release-assets/custom-lang-linux-x86_64
+          release-assets/custom-lang-windows-x86_64.exe
+          release-assets/custom-lang-macos-x86_64
+          release-assets/custom-lang-macos-arm64
+          custom-lang-${{ github.ref_name }}-examples.tar.gz
         generate_release_notes: true
         draft: false
         prerelease: false
+        body: |
+          ## Custom Language Interpreter ${{ github.ref_name }}
+
+          ### Download the right binary for your platform:
+
+          | Platform | File |
+          |----------|------|
+          | Linux x86_64 | `custom-lang-linux-x86_64` |
+          | Windows x86_64 | `custom-lang-windows-x86_64.exe` |
+          | macOS x86_64 (Intel) | `custom-lang-macos-x86_64` |
+          | macOS arm64 (Apple Silicon) | `custom-lang-macos-arm64` |
+
+          ### Quick start
+          ```bash
+          # Make executable (Linux/macOS)
+          chmod +x custom-lang-*
+
+          # Run a file
+          ./custom-lang-linux-x86_64 program.cl
+
+          # Start the REPL
+          ./custom-lang-linux-x86_64 --repl
+          ```
+
+          See [CHANGELOG.md](CHANGELOG.md) for what's new.
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

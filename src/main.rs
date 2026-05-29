@@ -16,7 +16,7 @@ use semantic::SemanticAnalyzer;
 
 fn main() -> Result<(), CustomLangError> {
     let matches = Command::new("custom-lang")
-        .version("2.0.0")
+        .version("0.3.0")
         .about("A modern custom language interpreter")
         .subcommand_required(false)
         .arg(
@@ -494,7 +494,7 @@ fn cmd_debug(file: &str) -> Result<(), CustomLangError> {
 }
 
 fn print_welcome() {
-    println!("Custom Language Interpreter v2.0.0");
+    println!("Custom Language Interpreter v0.3.0");
     println!();
     println!("Usage:");
     println!("  custom-lang <file.cl>              Execute a source file");

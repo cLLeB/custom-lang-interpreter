@@ -1,6 +1,6 @@
 [package]
 name = "custom-lang"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 authors = ["Caleb Kyere Boateng <kyereboatengcaleb@gmail.com>"]
 description = "A modern programming language interpreter with comprehensive features including dynamic typing, control flow, functions, and interactive REPL"

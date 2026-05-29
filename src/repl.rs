@@ -20,7 +20,7 @@ impl Repl {
     }
 
     pub fn run(&mut self) -> Result<()> {
-        println!("{}", "Custom Language REPL v1.0.0".bright_cyan().bold());
+        println!("{}", "Custom Language REPL v0.3.0".bright_cyan().bold());
         println!(
             "{}",
             "Type 'exit' or 'quit' to exit, 'help' for commands.".dimmed()

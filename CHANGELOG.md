@@ -5,6 +5,32 @@ All notable changes to the Custom Language Interpreter will be documented in thi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-05-29
+
+### Added
+- **106 language features** across 10 implementation phases including closures, classes, pattern matching, destructuring, generators, async/await, modules, and a full standard library
+- **Subcommands**: `fmt`, `lint`, `test`, `docs`, `profile`, `compile`, `debug`
+- **JS transpilation**: `custom-lang compile file.cl --target js`
+- **For-in / for-of** loops over arrays and objects
+- **Class system** with inheritance (`extends`), getters/setters, `super`, decorators
+- **Pattern matching** (`match` expressions with guards)
+- **Destructuring** for arrays and objects
+- **Generator functions** (`function*`, `yield`)
+- **Try/catch/finally** and `throw`
+- **Module system** (`import`/`export`)
+- **Expanded standard library**: math, string, array, object, crypto, date/time, HTTP, regex, collections (Map, Set, PriorityQueue), functional helpers (curry, compose, memoize, pipe)
+
+### Fixed
+- Function names that are contextual keywords (`get`, `set`, `from`, etc.) now parse correctly
+- `type()` calls in examples replaced with `get_type()` to avoid keyword collision
+- Stack overflow test spawns with a 32 MB thread stack for Windows compatibility
+- All 30 `clippy -D warnings` resolved across `interpreter.rs`, `parser.rs`, `ast.rs`, `lexer.rs`, `main.rs`
+
+### Changed
+- Version bumped to 0.3.0
+- REPL version string updated to v0.3.0
+- Cross-platform release workflow builds native binaries for Windows, Linux, and macOS
+
 ## [0.2.0] - 2024-12-27
 
 ### Added
