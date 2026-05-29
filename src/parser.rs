@@ -361,7 +361,7 @@ impl Parser {
     fn function_stmt_inner(&mut self, is_static: bool, is_async: bool) -> Result<Stmt> {
         let pos = self.advance().pos.clone(); // 'function'
         let is_generator = self.match_tok(&TokenKind::Star);
-        let name = self.expect_ident("expected function name")?;
+        let name = self.expect_ident_or_keyword()?;
         let params = self.parse_params()?;
         // skip return type annotation
         if self.match_tok(&TokenKind::Arrow) {
