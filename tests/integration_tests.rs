@@ -115,9 +115,8 @@ fn test_function_basic() {
 
 #[test]
 fn test_recursion() {
-    let result = eval(
-        "function fib(n) { if (n <= 1) { return n; } return fib(n-1) + fib(n-2); } fib(10)"
-    );
+    let result =
+        eval("function fib(n) { if (n <= 1) { return n; } return fib(n-1) + fib(n-2); } fib(10)");
     assert_eq!(result, "55");
 }
 
@@ -224,10 +223,7 @@ fn test_match_literal() {
 
 #[test]
 fn test_match_binding() {
-    assert_eq!(
-        eval(r#"match 99 { x => x * 2 }"#),
-        "198"
-    );
+    assert_eq!(eval(r#"match 99 { x => x * 2 }"#), "198");
 }
 
 #[test]
