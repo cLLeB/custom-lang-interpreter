@@ -444,13 +444,19 @@ impl Interpreter {
             },
             Stmt::Enum { name, variants, .. } => {
                 let mut map = std::collections::HashMap::new();
-                for (vname, val_expr) in variants {
-                    let v = if let Some(e) = val_expr {
+                for (ordinal, (vname, val_expr)) in variants.iter().enumerate() {
+                    let value = if let Some(e) = val_expr {
                         self.eval_expr(e)?
                     } else {
-                        Value::Null
+                        Value::Number(ordinal as f64)
                     };
-                    map.insert(vname.clone(), v);
+                    let variant = Value::EnumVariant(Rc::new(EnumVariantData {
+                        enum_name: name.clone(),
+                        name: vname.clone(),
+                        value,
+                        ordinal: ordinal as i64,
+                    }));
+                    map.insert(vname.clone(), variant);
                 }
                 Env::define(&self.env, name, Value::make_object(map));
                 Ok(Signal::None)
@@ -1364,6 +1370,13 @@ impl Interpreter {
             },
             Value::Builtin(n) => match name {
                 "name" => Ok(Value::Str(n.clone())),
+                _ => Ok(Value::Null),
+            },
+            Value::EnumVariant(v) => match name {
+                "name" => Ok(Value::Str(v.name.clone())),
+                "value" => Ok(v.value.clone()),
+                "ordinal" => Ok(Value::Number(v.ordinal as f64)),
+                "enum" => Ok(Value::Str(v.enum_name.clone())),
                 _ => Ok(Value::Null),
             },
             _ => Err(CustomLangError::type_err(format!(

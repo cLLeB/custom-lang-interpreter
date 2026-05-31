@@ -36,6 +36,18 @@ pub enum Value {
     Class(Rc<ClassData>),
     Instance(Rc<RefCell<InstanceData>>),
     Generator(Rc<RefCell<GeneratorState>>),
+    EnumVariant(Rc<EnumVariantData>),
+}
+
+/// A single enum member, e.g. `Color.Red`. Carries its owning enum's name, its
+/// own variant name, its assigned value (ordinal by default, or an explicit
+/// value), and its declaration-order ordinal. Displays as the bare variant name.
+#[derive(Debug)]
+pub struct EnumVariantData {
+    pub enum_name: String,
+    pub name: String,
+    pub value: Value,
+    pub ordinal: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -118,6 +130,7 @@ impl Value {
             Value::Class(_) => "class",
             Value::Instance(_) => "instance",
             Value::Generator(_) => "generator",
+            Value::EnumVariant(_) => "enum",
         }
     }
     pub fn is_truthy(&self) -> bool {
@@ -147,6 +160,9 @@ impl Value {
             }
             (Value::Object(a), Value::Object(b)) => Rc::ptr_eq(a, b),
             (Value::Instance(a), Value::Instance(b)) => Rc::ptr_eq(a, b),
+            (Value::EnumVariant(a), Value::EnumVariant(b)) => {
+                Rc::ptr_eq(a, b) || (a.enum_name == b.enum_name && a.name == b.name)
+            }
             _ => false,
         }
     }
@@ -203,6 +219,7 @@ impl fmt::Display for Value {
             Value::Class(c) => write!(f, "<class {}>", c.name),
             Value::Instance(inst) => write!(f, "<{} instance>", inst.borrow().class.name),
             Value::Generator(_) => write!(f, "<generator>"),
+            Value::EnumVariant(v) => write!(f, "{}", v.name),
         }
     }
 }

@@ -305,3 +305,69 @@ fn test_type_coercion() {
     assert_eq!(eval("is_string(\"hi\")"), "true");
     assert_eq!(eval("is_null(null)"), "true");
 }
+
+// ── Typed parameters (regression: type annotation must stop at top-level comma) ─
+
+#[test]
+fn test_typed_params_multiple() {
+    // Previously the type annotation greedily swallowed ", b: number", so only
+    // `a` was bound and the body's `b`/`c` were "Undefined variable".
+    assert_eq!(
+        eval("function add(a: number, b: number) { return a + b }\nadd(2, 3)"),
+        "5"
+    );
+    assert_eq!(
+        eval("function add3(a: number, b: number, c: number) { return a + b + c }\nadd3(2, 3, 4)"),
+        "9"
+    );
+}
+
+#[test]
+fn test_typed_params_with_generics() {
+    // Commas inside a generic type are at depth > 0 and must NOT end the param.
+    assert_eq!(
+        eval("function f(m: Map<string, number>, n: number) { return n }\nf(0, 7)"),
+        "7"
+    );
+}
+
+#[test]
+fn test_typed_params_with_default() {
+    assert_eq!(
+        eval("function g(a: number, b: number = 10) { return a + b }\ng(5)"),
+        "15"
+    );
+}
+
+// ── Enums (regression: variants display by name, expose name/value/ordinal) ─────
+
+#[test]
+fn test_enum_displays_name_not_ordinal() {
+    assert_eq!(eval("enum Color { Red, Green, Blue }\nColor.Red"), "Red");
+    assert_eq!(eval("enum Color { Red, Green, Blue }\nColor.Blue"), "Blue");
+}
+
+#[test]
+fn test_enum_accessors() {
+    let prog = "enum Color { Red, Green, Blue }\n";
+    assert_eq!(eval(&format!("{prog}Color.Green.name")), "Green");
+    assert_eq!(eval(&format!("{prog}Color.Green.value")), "1");
+    assert_eq!(eval(&format!("{prog}Color.Blue.ordinal")), "2");
+    assert_eq!(eval(&format!("{prog}Color.Red.enum")), "Color");
+}
+
+#[test]
+fn test_enum_equality() {
+    assert_eq!(eval("enum C { A, B }\nC.A == C.A"), "true");
+    assert_eq!(eval("enum C { A, B }\nC.A == C.B"), "false");
+}
+
+#[test]
+fn test_enum_explicit_values() {
+    let prog = "enum Status { Active = 10, Inactive = 20 }\n";
+    assert_eq!(eval(&format!("{prog}Status.Active.value")), "10");
+    assert_eq!(eval(&format!("{prog}Status.Inactive.value")), "20");
+    // Name and ordinal are independent of the explicit value.
+    assert_eq!(eval(&format!("{prog}Status.Inactive.name")), "Inactive");
+    assert_eq!(eval(&format!("{prog}Status.Inactive.ordinal")), "1");
+}

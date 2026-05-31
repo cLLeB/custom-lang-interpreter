@@ -191,6 +191,9 @@ impl Parser {
                 | TokenKind::Semicolon
                 | TokenKind::LBrace
                 | TokenKind::Eof => break,
+                // A top-level comma ends this parameter's type; commas inside
+                // generics/tuples (e.g. Map<string, number>) are at depth > 0.
+                TokenKind::Comma if depth == 0 => break,
                 TokenKind::Lt | TokenKind::LParen | TokenKind::LBracket => {
                     depth += 1;
                     self.advance();
