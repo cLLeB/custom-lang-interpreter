@@ -1,0 +1,4 @@
+# Pin the conformance corpus and golden outputs to LF so goldens are stable and
+# diffs are deterministic across platforms.
+*.cl       text eol=lf
+*.cl.out   text eol=lf
