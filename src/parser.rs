@@ -58,7 +58,7 @@ impl Parser {
     }
 
     fn decorator_stmt(&mut self) -> Result<Stmt> {
-        let pos = self.advance().pos.clone(); // @
+        let pos = self.advance().pos; // @
         let name = self.expect_ident("expected decorator name")?;
         // optional (args) - skip for now
         if self.check(&TokenKind::LParen) {
@@ -86,7 +86,7 @@ impl Parser {
     }
 
     fn labeled_stmt(&mut self) -> Result<Stmt> {
-        let pos = self.peek().pos.clone();
+        let pos = self.peek().pos;
         let label = self.expect_ident("expected label")?;
         self.advance(); // consume ':'
         self.skip_newlines();
@@ -95,7 +95,7 @@ impl Parser {
     }
 
     fn let_stmt(&mut self) -> Result<Stmt> {
-        let pos = self.advance().pos.clone();
+        let pos = self.advance().pos;
         // Array destructuring: let [a, b] = ...
         if self.check(&TokenKind::LBracket) {
             return self.let_destruct_array(pos);
@@ -215,7 +215,7 @@ impl Parser {
     }
 
     fn if_stmt(&mut self) -> Result<Stmt> {
-        let pos = self.advance().pos.clone();
+        let pos = self.advance().pos;
         self.expect(&TokenKind::LParen, "expected '(' after 'if'")?;
         let cond = self.expression()?;
         self.expect(&TokenKind::RParen, "expected ')'")?;
@@ -237,7 +237,7 @@ impl Parser {
     }
 
     fn while_stmt(&mut self) -> Result<Stmt> {
-        let pos = self.advance().pos.clone();
+        let pos = self.advance().pos;
         self.expect(&TokenKind::LParen, "expected '('")?;
         let cond = self.expression()?;
         self.expect(&TokenKind::RParen, "expected ')'")?;
@@ -247,7 +247,7 @@ impl Parser {
     }
 
     fn do_while_stmt(&mut self) -> Result<Stmt> {
-        let pos = self.advance().pos.clone();
+        let pos = self.advance().pos;
         self.skip_newlines();
         let body = Box::new(self.statement()?);
         self.skip_newlines();
@@ -263,7 +263,7 @@ impl Parser {
     }
 
     fn for_stmt(&mut self) -> Result<Stmt> {
-        let pos = self.advance().pos.clone();
+        let pos = self.advance().pos;
         self.expect(&TokenKind::LParen, "expected '('")?;
 
         // for (x in expr) or for (x of expr)
@@ -337,7 +337,7 @@ impl Parser {
     }
 
     fn let_stmt_no_term(&mut self) -> Result<Stmt> {
-        let pos = self.advance().pos.clone();
+        let pos = self.advance().pos;
         let name = self.expect_ident("expected variable name")?;
         if self.match_tok(&TokenKind::Colon) {
             self.skip_type_annotation()?;
@@ -352,7 +352,7 @@ impl Parser {
 
     fn expr_stmt_no_term(&mut self) -> Result<Stmt> {
         let expr = self.expression()?;
-        let pos = expr.pos().clone();
+        let pos = *expr.pos();
         Ok(Stmt::Expr { expr, pos })
     }
 
@@ -362,7 +362,7 @@ impl Parser {
     }
 
     fn function_stmt_inner(&mut self, is_static: bool, is_async: bool) -> Result<Stmt> {
-        let pos = self.advance().pos.clone(); // 'function'
+        let pos = self.advance().pos; // 'function'
         let is_generator = self.match_tok(&TokenKind::Star);
         let name = self.expect_ident_or_keyword()?;
         let params = self.parse_params()?;
@@ -384,7 +384,7 @@ impl Parser {
     }
 
     fn return_stmt(&mut self) -> Result<Stmt> {
-        let pos = self.advance().pos.clone();
+        let pos = self.advance().pos;
         let value = if self.check(&TokenKind::Semicolon)
             || self.check(&TokenKind::Newline)
             || self.check(&TokenKind::RBrace)
@@ -399,7 +399,7 @@ impl Parser {
     }
 
     fn break_stmt(&mut self) -> Result<Stmt> {
-        let pos = self.advance().pos.clone();
+        let pos = self.advance().pos;
         let label = if self.peek_is_ident()
             && !self.check(&TokenKind::Newline)
             && !self.check(&TokenKind::Semicolon)
@@ -413,7 +413,7 @@ impl Parser {
     }
 
     fn continue_stmt(&mut self) -> Result<Stmt> {
-        let pos = self.advance().pos.clone();
+        let pos = self.advance().pos;
         let label = if self.peek_is_ident()
             && !self.check(&TokenKind::Newline)
             && !self.check(&TokenKind::Semicolon)
@@ -427,14 +427,14 @@ impl Parser {
     }
 
     fn print_stmt(&mut self) -> Result<Stmt> {
-        let pos = self.advance().pos.clone();
+        let pos = self.advance().pos;
         let expr = self.expression()?;
         self.consume_terminator()?;
         Ok(Stmt::Print { expr, pos })
     }
 
     fn import_stmt(&mut self) -> Result<Stmt> {
-        let pos = self.advance().pos.clone();
+        let pos = self.advance().pos;
         // Selective: import { a, b as c } from "module"
         if self.check(&TokenKind::LBrace) {
             self.advance();
@@ -511,7 +511,7 @@ impl Parser {
     }
 
     fn export_stmt(&mut self) -> Result<Stmt> {
-        let pos = self.advance().pos.clone();
+        let pos = self.advance().pos;
         // export function / export let / export class
         if self.check(&TokenKind::Function)
             || self.check(&TokenKind::Async)
@@ -533,7 +533,7 @@ impl Parser {
     }
 
     fn class_stmt(&mut self) -> Result<Stmt> {
-        let pos = self.advance().pos.clone();
+        let pos = self.advance().pos;
         let name = self.expect_ident("expected class name")?;
         let super_name = if self.match_tok(&TokenKind::Extends) {
             Some(self.expect_ident("expected superclass name")?)
@@ -567,7 +567,7 @@ impl Parser {
             let is_async = self.match_tok(&TokenKind::Async);
             // getter: get name() { }
             if self.check(&TokenKind::Get) && self.peek2_is_ident() {
-                let gpos = self.advance().pos.clone();
+                let gpos = self.advance().pos;
                 let gname = self.expect_ident("expected getter name")?;
                 self.expect(&TokenKind::LParen, "expected '('")?;
                 self.expect(&TokenKind::RParen, "expected ')'")?;
@@ -587,7 +587,7 @@ impl Parser {
             }
             // setter: set name(v) { }
             if self.check(&TokenKind::Set) && self.peek2_is_ident() {
-                let spos = self.advance().pos.clone();
+                let spos = self.advance().pos;
                 let sname = self.expect_ident("expected setter name")?;
                 self.expect(&TokenKind::LParen, "expected '('")?;
                 let param = self.expect_ident("expected setter parameter")?;
@@ -608,21 +608,21 @@ impl Parser {
             }
             // Static field: static PI = 3.14;
             if is_static && self.peek_is_ident() && !self.check(&TokenKind::Function) {
-                let fpos = self.peek().pos.clone();
+                let fpos = self.peek().pos;
                 let fname = self.expect_ident("expected field name")?;
                 let init = if self.match_tok(&TokenKind::Eq) {
                     self.expression()?
                 } else {
                     Expr::Literal {
                         value: Value::Null,
-                        pos: fpos.clone(),
+                        pos: fpos,
                     }
                 };
                 self.consume_terminator()?;
                 // encode as a function named __static_field_name__ that returns the value
                 let body = Box::new(Stmt::Return {
                     value: Some(init),
-                    pos: fpos.clone(),
+                    pos: fpos,
                 });
                 methods.push(Stmt::Function {
                     name: format!("__static_field_{fname}__"),
@@ -639,20 +639,20 @@ impl Parser {
                 methods.push(self.function_stmt_inner(is_static, is_async)?);
             } else if !is_static && self.peek_is_ident() {
                 // Instance field: fieldname = value; (private or public)
-                let fpos = self.peek().pos.clone();
+                let fpos = self.peek().pos;
                 let fname = self.expect_ident("expected field name")?;
                 let init = if self.match_tok(&TokenKind::Eq) {
                     self.expression()?
                 } else {
                     Expr::Literal {
                         value: Value::Null,
-                        pos: fpos.clone(),
+                        pos: fpos,
                     }
                 };
                 self.consume_terminator()?;
                 let body = Box::new(Stmt::Return {
                     value: Some(init),
-                    pos: fpos.clone(),
+                    pos: fpos,
                 });
                 methods.push(Stmt::Function {
                     name: format!("__field_{fname}__"),
@@ -677,7 +677,7 @@ impl Parser {
     }
 
     fn try_stmt(&mut self) -> Result<Stmt> {
-        let pos = self.advance().pos.clone();
+        let pos = self.advance().pos;
         self.skip_newlines();
         let try_b = Box::new(self.block_stmt()?);
         let mut catch_var = None;
@@ -712,14 +712,14 @@ impl Parser {
     }
 
     fn throw_stmt(&mut self) -> Result<Stmt> {
-        let pos = self.advance().pos.clone();
+        let pos = self.advance().pos;
         let value = self.expression()?;
         self.consume_terminator()?;
         Ok(Stmt::Throw { value, pos })
     }
 
     fn enum_stmt(&mut self) -> Result<Stmt> {
-        let pos = self.advance().pos.clone();
+        let pos = self.advance().pos;
         let name = self.expect_ident("expected enum name")?;
         self.expect(&TokenKind::LBrace, "expected '{'")?;
         let mut variants = Vec::new();
@@ -735,7 +735,7 @@ impl Parser {
             } else {
                 let v = Expr::Literal {
                     value: Value::Number(counter as f64),
-                    pos: pos.clone(),
+                    pos,
                 };
                 counter += 1;
                 Some(v)
@@ -754,7 +754,7 @@ impl Parser {
     }
 
     fn type_alias_stmt(&mut self) -> Result<Stmt> {
-        let pos = self.advance().pos.clone();
+        let pos = self.advance().pos;
         let name = self.expect_ident("expected type alias name")?;
         self.match_tok(&TokenKind::Eq);
         self.skip_type_annotation()?;
@@ -763,7 +763,7 @@ impl Parser {
     }
 
     fn interface_stmt(&mut self) -> Result<Stmt> {
-        let pos = self.advance().pos.clone();
+        let pos = self.advance().pos;
         let name = self.expect_ident("expected interface name")?;
         // skip the whole body
         if self.check(&TokenKind::LBrace) {
@@ -792,7 +792,7 @@ impl Parser {
     }
 
     fn block_stmt(&mut self) -> Result<Stmt> {
-        let pos = self.advance().pos.clone();
+        let pos = self.advance().pos;
         let mut stmts = Vec::new();
         loop {
             self.skip_newlines();
@@ -807,7 +807,7 @@ impl Parser {
 
     fn expr_stmt(&mut self) -> Result<Stmt> {
         let expr = self.expression()?;
-        let pos = expr.pos().clone();
+        let pos = *expr.pos();
         self.consume_terminator()?;
         Ok(Stmt::Expr { expr, pos })
     }
@@ -834,13 +834,13 @@ impl Parser {
                     let read = Expr::Prop {
                         object: object.clone(),
                         name: name.clone(),
-                        pos: pos.clone(),
+                        pos,
                     };
                     let combined = Expr::Binary {
                         left: Box::new(read),
                         op: op.to_binary(),
                         right: Box::new(rhs),
-                        pos: pos.clone(),
+                        pos,
                     };
                     Ok(Expr::PropAssign {
                         object: object.clone(),
@@ -853,13 +853,13 @@ impl Parser {
                     let read = Expr::Index {
                         object: object.clone(),
                         index: index.clone(),
-                        pos: pos.clone(),
+                        pos,
                     };
                     let combined = Expr::Binary {
                         left: Box::new(read),
                         op: op.to_binary(),
                         right: Box::new(rhs),
-                        pos: pos.clone(),
+                        pos,
                     };
                     Ok(Expr::IndexAssign {
                         object: object.clone(),
@@ -1041,7 +1041,7 @@ impl Parser {
     fn relational(&mut self) -> Result<Expr> {
         let mut expr = self.shift()?;
         loop {
-            let pos = self.peek().pos.clone();
+            let pos = self.peek().pos;
             if let Some(op) = self.match_cmp_op() {
                 expr = Expr::Binary {
                     left: Box::new(expr),
@@ -1073,7 +1073,7 @@ impl Parser {
     fn shift(&mut self) -> Result<Expr> {
         let mut expr = self.term()?;
         loop {
-            let pos = self.peek().pos.clone();
+            let pos = self.peek().pos;
             if self.match_tok(&TokenKind::LtLt) {
                 expr = Expr::Binary {
                     left: Box::new(expr),
@@ -1276,13 +1276,13 @@ impl Parser {
     fn primary(&mut self) -> Result<Expr> {
         // Arrow: ident =>
         if self.peek_is_ident() && self.peek2_is(&TokenKind::Arrow) {
-            let pos = self.peek().pos.clone();
+            let pos = self.peek().pos;
             let name = self.expect_ident("expected param")?;
             self.advance(); // =>
             return self.parse_arrow_body(vec![Param::simple(name)], pos);
         }
         let tok = self.advance();
-        let pos = tok.pos.clone();
+        let pos = tok.pos;
         let kind_display = format!("{:?}", tok.kind);
         match tok.kind.clone() {
             TokenKind::True => Ok(Expr::Literal {
@@ -1324,7 +1324,7 @@ impl Parser {
                 self.skip_newlines();
                 while !self.check(&TokenKind::RBracket) && !self.at_end() {
                     if self.check(&TokenKind::DotDotDot) {
-                        let sp = self.peek().pos.clone();
+                        let sp = self.peek().pos;
                         self.advance();
                         let e = self.assignment()?;
                         elements.push(Expr::Spread {
@@ -1348,7 +1348,7 @@ impl Parser {
                 self.skip_newlines();
                 while !self.check(&TokenKind::RBrace) && !self.at_end() {
                     if self.check(&TokenKind::DotDotDot) {
-                        let sp = self.peek().pos.clone();
+                        let sp = self.peek().pos;
                         self.advance();
                         let expr = self.assignment()?;
                         pairs.push((
@@ -1409,7 +1409,7 @@ impl Parser {
                     body: if is_generator {
                         Box::new(Stmt::Block {
                             stmts: vec![*body],
-                            pos: pos.clone(),
+                            pos,
                         })
                     } else {
                         body
@@ -1427,7 +1427,7 @@ impl Parser {
     }
 
     fn parse_object_pair(&mut self) -> Result<(ObjectKey, Expr)> {
-        let pp = self.peek().pos.clone();
+        let pp = self.peek().pos;
         if self.match_tok(&TokenKind::LBracket) {
             let key_expr = self.expression()?;
             self.expect(&TokenKind::RBracket, "expected ']'")?;
@@ -1483,7 +1483,7 @@ impl Parser {
                 if !current.is_empty() {
                     parts.push(Expr::Literal {
                         value: Value::Str(current.clone()),
-                        pos: pos.clone(),
+                        pos,
                     });
                     current.clear();
                 }
@@ -1523,7 +1523,7 @@ impl Parser {
         if !current.is_empty() {
             parts.push(Expr::Literal {
                 value: Value::Str(current),
-                pos: pos.clone(),
+                pos,
             });
         }
         if parts.is_empty() {
@@ -1538,7 +1538,7 @@ impl Parser {
                 left: Box::new(result),
                 op: BinaryOp::Add,
                 right: Box::new(part),
-                pos: pos.clone(),
+                pos,
             };
         }
         Ok(result)
@@ -1554,7 +1554,7 @@ impl Parser {
             })
         } else {
             let expr = self.assignment()?;
-            let ep = expr.pos().clone();
+            let ep = *expr.pos();
             Ok(Expr::Lambda {
                 params,
                 body: Box::new(Stmt::Return {
@@ -1732,13 +1732,13 @@ impl Parser {
                 };
                 self.advance(); // consume ':'
                 let val = self.assignment()?;
-                let pos = val.pos().clone();
+                let pos = *val.pos();
                 named_pairs.push((ObjectKey::Static(name), val));
                 let _ = pos;
             } else if in_named {
                 return Err(self.parse_err("positional argument after named argument"));
             } else if self.check(&TokenKind::DotDotDot) {
-                let sp = self.peek().pos.clone();
+                let sp = self.peek().pos;
                 self.advance();
                 let e = self.assignment()?;
                 args.push(Expr::Spread {
@@ -1762,7 +1762,7 @@ impl Parser {
                 ObjectKey::Static("__named__".to_string()),
                 Expr::Literal {
                     value: Value::Bool(true),
-                    pos: pos.clone(),
+                    pos,
                 },
             );
             let mut pairs = vec![sentinel];
@@ -1793,7 +1793,7 @@ impl Parser {
     }
     fn prev_pos(&self) -> Position {
         if self.cur > 0 {
-            self.tokens[self.cur - 1].pos.clone()
+            self.tokens[self.cur - 1].pos
         } else {
             Position::default()
         }

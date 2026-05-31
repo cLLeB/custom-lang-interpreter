@@ -2,6 +2,8 @@ use clap::{Arg, ArgAction, Command};
 use std::fs;
 
 mod ast;
+mod bytecode;
+mod compiler;
 mod env;
 mod error;
 mod interpreter;
@@ -9,6 +11,7 @@ mod lexer;
 mod parser;
 mod repl;
 mod semantic;
+mod vm;
 
 use error::CustomLangError;
 use repl::Repl;
@@ -41,6 +44,12 @@ fn main() -> Result<(), CustomLangError> {
         .arg(
             Arg::new("no-semantic")
                 .long("no-semantic")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("vm")
+                .long("vm")
+                .help("Run via the bytecode compiler + VM instead of the tree-walker")
                 .action(ArgAction::SetTrue),
         )
         .subcommand(
@@ -87,6 +96,11 @@ fn main() -> Result<(), CustomLangError> {
                 .about("Debug a file")
                 .arg(Arg::new("file").required(true).index(1)),
         )
+        .subcommand(
+            Command::new("exec")
+                .about("Execute a compiled .clbc bytecode file on the VM")
+                .arg(Arg::new("file").required(true).index(1)),
+        )
         .get_matches();
 
     match matches.subcommand() {
@@ -125,6 +139,10 @@ fn main() -> Result<(), CustomLangError> {
             let file = sub.get_one::<String>("file").unwrap();
             cmd_debug(file)?;
         }
+        Some(("exec", sub)) => {
+            let file = sub.get_one::<String>("file").unwrap();
+            cmd_exec(file)?;
+        }
         _ => {
             let verbose = matches.get_flag("verbose");
             let no_semantic = matches.get_flag("no-semantic");
@@ -133,7 +151,11 @@ fn main() -> Result<(), CustomLangError> {
                 let mut repl = Repl::new();
                 repl.run()?;
             } else if let Some(filename) = matches.get_one::<String>("file") {
-                execute_file(filename, verbose, no_semantic)?;
+                if matches.get_flag("vm") {
+                    run_file_vm(filename)?;
+                } else {
+                    execute_file(filename, verbose, no_semantic)?;
+                }
             }
         }
     }
@@ -182,6 +204,45 @@ fn execute_source(source: &str, verbose: bool, no_semantic: bool) -> Result<(), 
         println!("Executing...");
     }
     interpreter::Interpreter::new().interpret(&program)?;
+    Ok(())
+}
+
+/// Compile a source file to bytecode and run it on the VM (the `--vm` path).
+fn run_file_vm(filename: &str) -> Result<(), CustomLangError> {
+    let source = fs::read_to_string(filename)
+        .map_err(|e| CustomLangError::io_err(format!("Cannot read '{filename}': {e}")))?;
+    let tokens = lexer::Lexer::new(&source).tokenize()?;
+    let program = parser::Parser::new(tokens).parse()?;
+    let main = match compiler::compile_program(&program) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::exit(1);
+        }
+    };
+    let mut machine = vm::Vm::new();
+    match machine.run(std::rc::Rc::new(main)) {
+        Ok(out) => {
+            print!("{out}");
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("{e}");
+            std::process::exit(1);
+        }
+    }
+}
+
+/// Execute a pre-compiled `.clbc` file on the VM (the `exec` subcommand).
+fn cmd_exec(file: &str) -> Result<(), CustomLangError> {
+    let bytes = fs::read(file)
+        .map_err(|e| CustomLangError::io_err(format!("Cannot read '{file}': {e}")))?;
+    let main = bytecode::deserialize(&bytes).map_err(CustomLangError::runtime)?;
+    let mut machine = vm::Vm::new();
+    let out = machine
+        .run(std::rc::Rc::new(main))
+        .map_err(|e| CustomLangError::runtime(e.to_string()))?;
+    print!("{out}");
     Ok(())
 }
 
@@ -370,13 +431,14 @@ fn cmd_compile(file: &str, target: &str, output: Option<&str>) -> Result<(), Cus
         "bytecode" => {
             let default_out = format!("{stem}.clbc");
             let out = output.unwrap_or(&default_out);
-            // Serialize AST as simple bytecode
-            let bc = format!(
-                "# custom-lang bytecode\n# source: {file}\n# statements: {}\n",
-                program.stmts.len()
+            let main = compiler::compile_program(&program)
+                .map_err(|e| CustomLangError::runtime(e.to_string()))?;
+            let bytes = bytecode::serialize(&main);
+            fs::write(out, &bytes).map_err(|e| CustomLangError::io_err(format!("write: {e}")))?;
+            println!(
+                "Compiled to bytecode: {out} ({} bytes). Run it with `custom-lang exec {out}`.",
+                bytes.len()
             );
-            fs::write(out, bc).map_err(|e| CustomLangError::io_err(format!("write: {e}")))?;
-            println!("Compiled to bytecode: {out}");
         }
         "wasm" => {
             println!("WASM target: compile with `wasm-pack` after generating JS target");

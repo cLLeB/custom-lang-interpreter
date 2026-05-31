@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use crate::env::EnvRef;
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Position {
     pub line: usize,
     pub column: usize,

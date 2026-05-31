@@ -339,7 +339,7 @@ impl Lexer {
                             self.advance();
                             if self.peek_is('=') {
                                 self.advance();
-                                tokens.push(Token::new(TokenKind::GtGtGt, p.clone()));
+                                tokens.push(Token::new(TokenKind::GtGtGt, p));
                                 tokens.push(Token::new(TokenKind::Eq, p));
                             } else {
                                 tokens.push(Token::new(TokenKind::GtGtGt, p));
