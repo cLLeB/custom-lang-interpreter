@@ -205,7 +205,9 @@ fn compile_stmt(s: &mut FnState, stmt: &Stmt) -> CResult<()> {
             s.emit(Op::Print, pos.line);
             Ok(())
         }
-        Stmt::Let { name, init, pos } => {
+        Stmt::Let {
+            name, init, pos, ..
+        } => {
             match init {
                 Some(e) => compile_expr(s, e)?,
                 None => s.emit(Op::Null, pos.line),

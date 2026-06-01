@@ -104,6 +104,23 @@ fn conformance() {
         interp_args.push(path_str);
         let interp = run(&interp_args);
 
+        // Rejection tests: `// expect-error: <substring>` asserts the program is
+        // refused (non-zero exit) with a diagnostic containing the substring.
+        // No golden / no VM run.
+        if let Some(needle) = directive(&src, "expect-error") {
+            if interp.ok {
+                failures.push(format!(
+                    "{rel}: expected rejection (error containing {needle:?}) but it ran successfully"
+                ));
+            } else if !interp.stderr.contains(&needle) {
+                failures.push(format!(
+                    "{rel}: rejected as expected, but diagnostic missing {needle:?}; stderr:\n{}",
+                    interp.stderr
+                ));
+            }
+            continue;
+        }
+
         if bless {
             if !interp.ok {
                 failures.push(format!(

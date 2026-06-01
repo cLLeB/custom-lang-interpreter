@@ -25,6 +25,23 @@ impl std::fmt::Display for Type {
     }
 }
 
+/// Map a primitive type annotation to the analyzer's inferred [`Type`].
+/// Complex/unknown annotations (`Other`) return `None` and are never checked.
+fn annotation_to_type(ann: &TypeAnn) -> Option<Type> {
+    match ann {
+        TypeAnn::Number => Some(Type::Number),
+        TypeAnn::Str => Some(Type::Str),
+        TypeAnn::Bool => Some(Type::Boolean),
+        TypeAnn::Null => Some(Type::Null),
+        TypeAnn::Other(_) => None,
+    }
+}
+
+/// A concrete primitive the checker can reason about with certainty.
+fn is_known_primitive(t: &Type) -> bool {
+    matches!(t, Type::Number | Type::Str | Type::Boolean | Type::Null)
+}
+
 struct Scope {
     vars: HashMap<String, Type>,
 }
@@ -390,13 +407,37 @@ impl SemanticAnalyzer {
 
     fn check_stmt(&mut self, stmt: &Stmt) {
         match stmt {
-            Stmt::Let { name, init, .. } => {
-                let ty = if let Some(expr) = init {
+            Stmt::Let {
+                name,
+                init,
+                ty,
+                pos,
+            } => {
+                let inferred = if let Some(expr) = init {
                     self.check_expr(expr)
                 } else {
                     Type::Null
                 };
-                self.define(name, ty);
+                // Static type check: a primitive annotation contradicted by a
+                // primitive initializer is rejected. Sound by construction — it
+                // only fires when BOTH sides are concrete primitives (never on
+                // `Unknown`), and `null` initializers are accepted against any
+                // annotation (the common "unset" idiom).
+                if let Some(expected) = ty.as_ref().and_then(annotation_to_type) {
+                    if is_known_primitive(&inferred)
+                        && inferred != Type::Null
+                        && inferred != expected
+                    {
+                        self.errors.push(CustomLangError::type_err(format!(
+                            "type mismatch at {pos}: '{name}' is annotated `{expected}` \
+                             but is initialized with a value of type `{inferred}`"
+                        )));
+                    }
+                }
+                // Record the binding's type, preferring a concrete annotation so
+                // downstream uses are checked against the declared type.
+                let recorded = ty.as_ref().and_then(annotation_to_type).unwrap_or(inferred);
+                self.define(name, recorded);
             }
             Stmt::Function {
                 name, params, body, ..
@@ -404,7 +445,13 @@ impl SemanticAnalyzer {
                 self.define(name, Type::Function);
                 self.push_scope();
                 for p in params {
-                    self.define(&p.name, Type::Unknown);
+                    // A primitive parameter annotation gives the binding a known
+                    // type so the body is checked against it; otherwise unknown.
+                    let pty =
+                        p.ty.as_ref()
+                            .and_then(annotation_to_type)
+                            .unwrap_or(Type::Unknown);
+                    self.define(&p.name, pty);
                 }
                 let was_fn = self.in_function;
                 self.in_function = true;

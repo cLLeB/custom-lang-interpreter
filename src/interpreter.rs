@@ -6578,6 +6578,7 @@ impl Interpreter {
                         name: "...rest".to_string(),
                         default: None,
                         is_rest: true,
+                        ty: None,
                     }],
                     body: Box::new(Stmt::Return {
                         value: None,

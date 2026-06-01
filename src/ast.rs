@@ -50,11 +50,50 @@ pub struct EnumVariantData {
     pub ordinal: i64,
 }
 
+/// A surface-syntax type annotation (`: number`, `: string`, `: Foo<T>`, …).
+/// Primitive heads are classified for static checking; everything else is kept
+/// verbatim as `Other` and treated as unknown by the checker (sound: never
+/// flagged). Complex tails (generics/unions) are not yet modeled.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TypeAnn {
+    Number,
+    Str,
+    Bool,
+    Null,
+    Other(String),
+}
+
+impl TypeAnn {
+    /// Classify a type-name head token into a primitive annotation.
+    pub fn from_name(name: &str) -> TypeAnn {
+        match name {
+            "number" => TypeAnn::Number,
+            "string" | "str" => TypeAnn::Str,
+            "bool" | "boolean" => TypeAnn::Bool,
+            "null" => TypeAnn::Null,
+            other => TypeAnn::Other(other.to_string()),
+        }
+    }
+}
+
+impl fmt::Display for TypeAnn {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TypeAnn::Number => write!(f, "number"),
+            TypeAnn::Str => write!(f, "string"),
+            TypeAnn::Bool => write!(f, "boolean"),
+            TypeAnn::Null => write!(f, "null"),
+            TypeAnn::Other(s) => write!(f, "{s}"),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Param {
     pub name: String,
     pub default: Option<Expr>,
     pub is_rest: bool,
+    pub ty: Option<TypeAnn>,
 }
 impl Param {
     pub fn simple(name: impl Into<String>) -> Self {
@@ -62,6 +101,7 @@ impl Param {
             name: name.into(),
             default: None,
             is_rest: false,
+            ty: None,
         }
     }
     #[allow(dead_code)]
@@ -70,6 +110,7 @@ impl Param {
             name: name.into(),
             default: Some(default),
             is_rest: false,
+            ty: None,
         }
     }
     #[allow(dead_code)]
@@ -78,6 +119,7 @@ impl Param {
             name: name.into(),
             default: None,
             is_rest: true,
+            ty: None,
         }
     }
 }
@@ -520,6 +562,7 @@ pub enum Stmt {
     Let {
         name: String,
         init: Option<Expr>,
+        ty: Option<TypeAnn>,
         pos: Position,
     },
     LetDestructArray {

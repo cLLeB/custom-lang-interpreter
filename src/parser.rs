@@ -105,17 +105,24 @@ impl Parser {
             return self.let_destruct_object(pos);
         }
         let name = self.expect_ident("expected variable name after 'let'")?;
-        // Skip optional type annotation: let x: Type = ...
-        if self.match_tok(&TokenKind::Colon) {
-            self.skip_type_annotation()?;
-        }
+        // Optional type annotation: let x: Type = ...
+        let ty = if self.match_tok(&TokenKind::Colon) {
+            self.parse_type_annotation()?
+        } else {
+            None
+        };
         let init = if self.match_tok(&TokenKind::Eq) {
             Some(self.expression()?)
         } else {
             None
         };
         self.consume_terminator()?;
-        Ok(Stmt::Let { name, init, pos })
+        Ok(Stmt::Let {
+            name,
+            init,
+            ty,
+            pos,
+        })
     }
 
     fn let_destruct_array(&mut self, pos: Position) -> Result<Stmt> {
@@ -181,8 +188,22 @@ impl Parser {
         Ok(Stmt::LetDestructObject { fields, init, pos })
     }
 
-    fn skip_type_annotation(&mut self) -> Result<()> {
-        // Skip tokens until we see = or newline or { or ;
+    /// Parse a type annotation following an already-consumed `:`. Captures the
+    /// head type name (classified into a primitive or kept verbatim as `Other`)
+    /// for the static checker, while consuming any complex tail (`<...>`,
+    /// `(...)`, `[...]`, unions) up to the terminator. Returns `None` only if no
+    /// type token is present.
+    fn parse_type_annotation(&mut self) -> Result<Option<TypeAnn>> {
+        // The head token names the type; classify it before consuming the rest.
+        let head = match &self.peek().kind {
+            TokenKind::Ident(name) => Some(TypeAnn::from_name(name)),
+            // `null` is a keyword token, not an Ident, but is a valid type.
+            TokenKind::Null => Some(TypeAnn::Null),
+            _ => None,
+        };
+
+        // Skip tokens until we see = or newline or { or ; (mirrors the historic
+        // skip behaviour so complex annotations still parse cleanly).
         let mut depth = 0i32;
         loop {
             match &self.peek().kind {
@@ -211,6 +232,13 @@ impl Parser {
                 }
             }
         }
+        Ok(head)
+    }
+
+    /// Consume a type annotation without capturing it (used where the checker
+    /// does not yet model the type, e.g. function return types, class fields).
+    fn skip_type_annotation(&mut self) -> Result<()> {
+        self.parse_type_annotation()?;
         Ok(())
     }
 
@@ -339,15 +367,22 @@ impl Parser {
     fn let_stmt_no_term(&mut self) -> Result<Stmt> {
         let pos = self.advance().pos;
         let name = self.expect_ident("expected variable name")?;
-        if self.match_tok(&TokenKind::Colon) {
-            self.skip_type_annotation()?;
-        }
+        let ty = if self.match_tok(&TokenKind::Colon) {
+            self.parse_type_annotation()?
+        } else {
+            None
+        };
         let init = if self.match_tok(&TokenKind::Eq) {
             Some(self.expression()?)
         } else {
             None
         };
-        Ok(Stmt::Let { name, init, pos })
+        Ok(Stmt::Let {
+            name,
+            init,
+            ty,
+            pos,
+        })
     }
 
     fn expr_stmt_no_term(&mut self) -> Result<Stmt> {
@@ -1601,9 +1636,11 @@ impl Parser {
             self.skip_newlines();
             let is_rest = self.match_tok(&TokenKind::DotDotDot);
             let name = self.expect_ident("expected parameter")?;
-            if self.match_tok(&TokenKind::Colon) {
-                self.skip_type_annotation()?;
-            }
+            let ty = if self.match_tok(&TokenKind::Colon) {
+                self.parse_type_annotation()?
+            } else {
+                None
+            };
             let default = if !is_rest && self.match_tok(&TokenKind::Eq) {
                 Some(self.assignment()?)
             } else {
@@ -1613,6 +1650,7 @@ impl Parser {
                 name,
                 default,
                 is_rest,
+                ty,
             });
             if is_rest {
                 break;

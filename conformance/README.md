@@ -25,6 +25,15 @@ Place these in the leading comment block of a `.cl` file:
 |-----------|--------|
 | `// args: <flags>` | Extra CLI flags for the interpreter run (e.g. `--no-semantic`). |
 | `// vm: run` | Also execute on the bytecode VM; its output **must** equal the golden. This is how interpreter/VM **parity** is enforced. |
+| `// expect-error: <substring>` | The program **must be rejected** (non-zero exit) with a diagnostic containing the substring. Used for static-checker tests; no golden, no VM run. |
+
+## Categories
+
+- `core/` — language core, with interpreter/VM parity (`// vm: run`).
+- `features/` — broader surface run on the interpreter (arrays, objects,
+  closures, error handling, enums, classes).
+- `types/` — the static type checker: valid annotations that must run, plus
+  `// expect-error` programs that must be rejected.
 
 ## Adding or updating programs
 
